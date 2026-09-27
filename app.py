@@ -428,7 +428,13 @@ def scheda(tipo, tmdb_id):
     liste = c().execute("""SELECT l.*, EXISTS(SELECT 1 FROM lista_titoli x WHERE x.lista_id=l.id AND x.titolo_id=?) AS dentro
                            FROM liste l ORDER BY ordine, nome""", (tid,)).fetchall()
     eventi = c().execute("SELECT * FROM eventi WHERE titolo_id=? ORDER BY quando DESC, id DESC LIMIT 10", (tid,)).fetchall()
-    return render_template("scheda.html", t=t, m=m, riep=db.riepilogo(c(), tid, m, oggi().isoformat()), episodi=episodi, stagioni=stagioni, liste=liste,
+    riep = db.riepilogo(c(), tid, m, oggi().isoformat())
+    uscite = [s for s in stagioni if s["numero"] > 0 and s["uscita"] and s["uscita"] <= oggi().isoformat()]
+    # «tutte viste»: ogni stagione uscita e' vista, o in pari (visti tutti gli episodi gia' usciti)
+    tutte_viste = bool(uscite) and all(
+        riep[s["numero"]]["vista"] or (riep[s["numero"]]["noti"] and riep[s["numero"]]["usciti"] and not riep[s["numero"]]["da_vedere"])
+        for s in uscite)
+    return render_template("scheda.html", t=t, m=m, riep=riep, tutte_viste=tutte_viste, episodi=episodi, stagioni=stagioni, liste=liste,
                            disp=disponibilita(tid), eventi=eventi, abbonato=abbonato, o=oggi().isoformat())
 
 
@@ -481,6 +487,12 @@ def scheda_azione(tipo, tmdb_id):
     elif az == "tutte_viste":
         mio(tid, crea=True)
         c().execute("UPDATE miei SET viste_fino=? WHERE titolo_id=?", (oggi().isoformat(), tid))
+        ancora = "#stagioni"
+    elif az == "tutte_da_vedere":
+        # il contrario: via ogni segno di «visto», dalle tre vie
+        mio(tid, crea=True)
+        c().execute("DELETE FROM visti_ep WHERE titolo_id=?", (tid,))
+        c().execute("UPDATE miei SET stagioni_viste='', viste_fino=NULL WHERE titolo_id=?", (tid,))
         ancora = "#stagioni"
     elif az == "lista":
         lid = request.form.get("lista", type=int)

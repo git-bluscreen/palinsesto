@@ -19,7 +19,8 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 // dopo una spunta si torna su #sN: quella stagione resta aperta
 window.addEventListener("DOMContentLoaded", () => {
-  const li = location.hash && document.getElementById(location.hash.slice(1));
+  // solo #s1, #s2...: «#stagioni» e' la sezione intera, e aprirebbe la prima stagione
+  const li = /^#s\d+$/.test(location.hash) && document.getElementById(location.hash.slice(1));
   const d = li && li.querySelector("details");
   if (d) d.open = true;
 });
