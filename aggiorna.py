@@ -195,6 +195,10 @@ def main():
             errori += 1
             log(f"scheda {tid}: {e}")
 
+    tolti, rimessi = logica.sincronizza_da_vedere(c, oggi); c.commit()
+    if tolti or rimessi:
+        log(f"«Da vedere»: tolti {len(tolti)} finiti, rimessi {len(rimessi)} con novità ({', '.join(rimessi)})")
+
     novita = {}
     if not o.senza_catalogo:
         try:

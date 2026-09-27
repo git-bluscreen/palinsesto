@@ -460,6 +460,11 @@ def scheda_azione(tipo, tmdb_id):
         c().execute("DELETE FROM miei WHERE titolo_id=?", (tid,))
     else:
         abort(400)
+    if az != "rimuovi":
+        if az == "lista":
+            c().execute("UPDATE miei SET tolto_auto=NULL WHERE titolo_id=?", (tid,))   # scelta a mano: vince lei
+        else:
+            logica.sincronizza_da_vedere(c(), oggi(), solo=tid)
     c().commit()
     torna = request.form.get("torna", "")
     if torna.startswith("/") and not torna.startswith("//"):
@@ -474,7 +479,8 @@ def liste():
     speciali = dict(
         piaciuti=c().execute("SELECT COUNT(*) FROM miei WHERE mi_piace=1").fetchone()[0],
         avvisi=c().execute("SELECT COUNT(*) FROM miei WHERE avvisi=1").fetchone()[0],
-        tutti=c().execute("SELECT COUNT(*) FROM miei").fetchone()[0])
+        tutti=c().execute("SELECT COUNT(*) FROM miei").fetchone()[0],
+        visti=c().execute("SELECT COUNT(*) FROM miei WHERE tolto_auto IS NOT NULL").fetchone()[0])
     return render_template("liste.html", liste=righe, speciali=speciali)
 
 
@@ -509,6 +515,11 @@ def lista(chi):
         nome = l["nome"]
         righe = c().execute("""SELECT t.* FROM lista_titoli x JOIN titoli t ON t.id=x.titolo_id
                                WHERE x.lista_id=? ORDER BY x.aggiunto DESC""", (l["id"],)).fetchall()
+    elif chi == "visti":
+        l, nome = None, "Visti"
+        dv = logica.da_vedere(c(), oggi())
+        tutti = c().execute("SELECT t.*, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id ORDER BY m.aggiunto DESC").fetchall()
+        righe = [t for t in tutti if logica.finito(c(), t, oggi(), dv)]
     elif chi in ("piaciuti", "avvisi", "tutti"):
         l = None
         nome = {"piaciuti": "Mi piace", "avvisi": "Con avvisi", "tutti": "Tutti i miei titoli"}[chi]
@@ -662,6 +673,7 @@ def importa():
                             (v,) if tipo == "movie" else (oggi().isoformat(), v))
             n += 1
         c().commit()
+        logica.sincronizza_da_vedere(c(), oggi()); c().commit()
         log(f"importati {n} titoli nella lista {lid}")
         return redirect(url_for("lista", chi=lid))
     # primo passo: una proposta per riga, da confermare

@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS miei (
   stagioni_viste TEXT DEFAULT '',  -- '1,2,3': spunte una per una
   viste_fino TEXT,                 -- serie: viste tutte le stagioni uscite fino a questa data (import, «segna uscite»)
   avvisi INTEGER DEFAULT 1,
-  aggiunto TEXT
+  aggiunto TEXT,
+  tolto_auto TEXT                  -- data in cui Palinsesto l'ha tolto da «Da vedere» perche' finito
 );
 
 CREATE TABLE IF NOT EXISTS liste (
@@ -160,7 +161,8 @@ def apri(file=None):
     c.executescript(SCHEMA)
     migra(c)
     if not c.execute("SELECT 1 FROM liste").fetchone():
-        c.execute("INSERT INTO liste (nome, ordine) VALUES ('Da vedere', 1)")
+        cur = c.execute("INSERT INTO liste (nome, ordine) VALUES ('Da vedere', 1)")
+        meta(c, "lista_da_vedere", cur.lastrowid)
         c.commit()
     return c
 
@@ -174,6 +176,14 @@ def migra(c):
         c.execute("ALTER TABLE miei ADD COLUMN viste_fino TEXT")
         c.execute("UPDATE miei SET viste_fino=date('now','localtime'), visto=0 WHERE visto=1 AND titolo_id LIKE 'tv:%'")
         c.commit()
+    if "tolto_auto" not in colonne:
+        c.execute("ALTER TABLE miei ADD COLUMN tolto_auto TEXT")
+        c.commit()
+    if not meta(c, "lista_da_vedere"):
+        r = c.execute("SELECT id FROM liste WHERE nome='Da vedere'").fetchone() or \
+            c.execute("SELECT id FROM liste ORDER BY ordine, id LIMIT 1").fetchone()
+        if r:
+            meta(c, "lista_da_vedere", r[0]); c.commit()
 
 
 def meta(c, chiave, valore=None):

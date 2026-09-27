@@ -40,7 +40,12 @@ r = s.post(B + "/t/tv/1", data=dict(azione="avvisi", csrf=csrf)); ok("avvisi spe
 r = s.post(B + "/t/tv/1", data=dict(azione="avvisi", csrf=csrf)); ok("avvisi riaccesi", "Avvisi attivi" in r.text)
 r = s.post(B + "/t/tv/1", data=dict(azione="boh", csrf=csrf)); ok("azione sconosciuta -> 400", r.status_code == 400)
 r = s.post(B + "/liste", data=dict(azione="nuova", nome="Horror", csrf=csrf)); ok("nuova lista", "Horror" in r.text)
+if "✓ Da vedere" in s.get(B + "/t/movie/2").text:      # il collaudo non dipende dallo stato lasciato da prova.py
+    s.post(B + "/t/movie/2", data=dict(azione="lista", lista=1, csrf=csrf))
 r = s.post(B + "/t/movie/2", data=dict(azione="lista", lista=1, csrf=csrf)); ok("film in «Da vedere»", r.status_code == 200 and "✓ Da vedere" in r.text)
+r = s.post(B + "/t/movie/2", data=dict(azione="visto", csrf=csrf)); ok("film visto: esce da «Da vedere»", "+ Da vedere" in r.text and "✓ Visto" in r.text)
+r = s.get(B + "/liste/visti"); ok("...e compare fra i Visti", "Film Due" in r.text)
+r = s.post(B + "/t/movie/2", data=dict(azione="visto", csrf=csrf)); ok("spunta tolta: rientra", "✓ Da vedere" in r.text)
 r = s.post(B + "/t/movie/2", data=dict(azione="lista", lista=1, csrf=csrf, torna="//esterno.example"), allow_redirects=False)
 ok("«torna» esterno ignorato", r.status_code == 302 and "esterno" not in r.headers["Location"], r.headers.get("Location"))
 r = s.post(B + "/abbonamenti/1", data=dict(stato="attivo", ciclo="mese", prezzo="13,99", rinnovo="2026-10-15", csrf=csrf))

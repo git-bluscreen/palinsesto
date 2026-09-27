@@ -227,6 +227,47 @@ def da_vedere(c, oggi):
     return out
 
 
+def finito(c, t, oggi, dv):
+    """Niente da vedere adesso. Film: segnato visto. Serie: almeno una stagione
+    uscita, niente di uscito da vedere e nessuna stagione in corso (una serie in
+    pari con episodi in arrivo non e' finita). Senza scheda completa: mai."""
+    if t["tipo"] == "movie":
+        return bool(t["visto"])
+    if not t["dettagli"]:
+        return False
+    x = dv.get(t["id"])
+    if x and (x["pronte"] or x["in_corso"]):
+        return False
+    return bool(c.execute("SELECT 1 FROM stagioni WHERE titolo_id=? AND numero>0 AND uscita<=?",
+                          (t["id"], iso(oggi))).fetchone())
+
+
+def sincronizza_da_vedere(c, oggi, solo=None):
+    """Toglie da «Da vedere» cio' che e' finito, e ci rimette cio' che Palinsesto
+    stesso aveva tolto quando torna qualcosa da vedere (stagione nuova, spunta
+    tolta). Un titolo tolto A MANO non rientra: `tolto_auto` resta vuoto.
+    Ritorna (tolti, rimessi) come titoli."""
+    from db import meta
+    lid = int(meta(c, "lista_da_vedere") or 0)
+    if not lid or not c.execute("SELECT 1 FROM liste WHERE id=?", (lid,)).fetchone():
+        return [], []
+    dv = da_vedere(c, oggi)
+    q = "SELECT t.*, m.visto, m.tolto_auto FROM miei m JOIN titoli t ON t.id=m.titolo_id" + (" WHERE t.id=?" if solo else "")
+    tolti, rimessi = [], []
+    for t in c.execute(q, (solo,) if solo else ()).fetchall():
+        dentro = c.execute("SELECT 1 FROM lista_titoli WHERE lista_id=? AND titolo_id=?", (lid, t["id"])).fetchone()
+        f = finito(c, t, oggi, dv)
+        if f and dentro:
+            c.execute("DELETE FROM lista_titoli WHERE lista_id=? AND titolo_id=?", (lid, t["id"]))
+            c.execute("UPDATE miei SET tolto_auto=? WHERE titolo_id=?", (iso(oggi), t["id"]))
+            tolti.append(t["titolo"])
+        elif not f and not dentro and t["tolto_auto"]:
+            c.execute("INSERT OR IGNORE INTO lista_titoli VALUES (?,?,?)", (lid, t["id"], iso(oggi)))
+            c.execute("UPDATE miei SET tolto_auto=NULL WHERE titolo_id=?", (t["id"],))
+            rimessi.append(t["titolo"])
+    return tolti, rimessi
+
+
 def cronologia_a_rischio(s):
     """Data da cui il servizio puo' cancellare la cronologia, se si puo' calcolare."""
     if s["stato"] != "disdetto" or not s["fine"] or not s["conserva_mesi"]:

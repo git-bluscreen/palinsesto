@@ -30,6 +30,7 @@
 <h2 class="sezione-titolo">Raccolte automatiche</h2>
 <ul class="elenco-liste">
   <li><a href="{{ url_for('lista', chi='tutti') }}"><b>Tutti i miei titoli</b><small>{{ speciali.tutti }}</small></a></li>
+  <li><a href="{{ url_for('lista', chi='visti') }}"><b>Visti</b><small>finiti, niente di nuovo da vedere</small></a></li>
   <li><a href="{{ url_for('lista', chi='piaciuti') }}"><b>Mi piace</b><small>{{ speciali.piaciuti }}</small></a></li>
   <li><a href="{{ url_for('lista', chi='avvisi') }}"><b>Con avvisi attivi</b><small>{{ speciali.avvisi }}</small></a></li>
 </ul>

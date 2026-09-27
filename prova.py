@@ -197,6 +197,32 @@ api.catalogo[NETFLIX] = [{"id": 10, "title": "Vecchio"}]
 n = aggiorna.aggiorna_catalogo(c, api, d40 + dt.timedelta(3))
 atteso("catalogo: un titolo che rientra non è nuovo", [f"{k}={v}" for k, v in n.items()])
 
+# «Da vedere» si tiene in ordine da sola
+lid = int(db.meta(c, "lista_da_vedere"))
+for tid in ("movie:2", "tv:1"):
+    c.execute("INSERT OR IGNORE INTO lista_titoli VALUES (?,?,?)", (lid, tid, d40.isoformat()))
+c.execute("UPDATE miei SET visto=0 WHERE titolo_id='movie:2'"); c.commit()
+sync = lambda d: logica.sincronizza_da_vedere(c, d)
+atteso("niente di finito: niente da togliere", sync(d40)[0])
+c.execute("UPDATE miei SET visto=1 WHERE titolo_id='movie:2'")
+atteso("film visto: esce da «Da vedere»", sync(d40)[0], "Film Due")
+c.execute("UPDATE miei SET visto=0 WHERE titolo_id='movie:2'")
+atteso("spunta tolta: rientra", sync(d40)[1], "Film Due")
+c.execute("DELETE FROM lista_titoli WHERE lista_id=? AND titolo_id='movie:2'", (lid,))
+atteso("tolto a mano: non rientra", sync(d40)[1])
+c.execute("INSERT INTO lista_titoli VALUES (?,?,?)", (lid, "movie:2", d40.isoformat()))
+atteso("serie con la stagione 3 da vedere: resta", sync(d40)[0])
+c.execute("UPDATE miei SET stagioni_viste='1,2,3' WHERE titolo_id='tv:1'")
+atteso("serie tutta vista: esce", sync(d40)[0], "Serie Uno")
+c.commit()
+d50 = d40 + dt.timedelta(10)
+api.schede[("tv", 1)]["status"] = "Returning Series"
+api.schede[("tv", 1)]["seasons"].append({"season_number": 4, "air_date": (d50 - dt.timedelta(3)).isoformat(), "episode_count": 1})
+api.episodi[(1, 4)] = [(d50 - dt.timedelta(3)).isoformat()]
+notte(c, api, d50)
+atteso("stagione 4 uscita: la serie rientra da sola", sync(d50)[1], "Serie Uno")
+c.commit()
+
 # notifica: un solo messaggio, poi niente
 aggiorna.notifica(c, {"Netflix": 1}, prova=True)
 resto = c.execute("SELECT COUNT(*) FROM eventi WHERE notificare=1 AND notificato=0").fetchone()[0]
