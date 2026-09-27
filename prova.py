@@ -50,6 +50,17 @@ class Finto:
         return {"episodes": [{"air_date": d, "episode_number": i + 1, "name": f"Ep {i + 1}"}
                              for i, d in enumerate(self.episodi.get((n, s), []))]}
 
+    def consigliati(self, tipo, n):
+        buono = dict(vote_count=500, vote_average=7.5)
+        if (tipo, n) == ("tv", 1):
+            return [dict(id=50, name="Consigliata Netflix", media_type="tv", **buono), dict(id=51, name="Senza servizio", media_type="tv", **buono),
+                    dict(id=52, name="Voto basso", media_type="tv", vote_count=500, vote_average=4.0), dict(id=2, title="Film Due", media_type="movie", **buono),
+                    dict(id=53, name="Nascosta", media_type="tv", **buono)]
+        return [dict(id=50, name="Consigliata Netflix", media_type="tv", **buono)]   # TMDB dice sempre il tipo
+
+    def provider_di(self, tipo, n):
+        return {50: prov(NETFLIX), 53: prov(NETFLIX), 52: prov(NETFLIX)}.get(n, {})
+
     def scopri(self, tipo, ids, pagina, dal):
         r = [x for i in ids for x in self.catalogo.get(i, []) if (x.get("title") and tipo == "movie") or (x.get("name") and tipo == "tv")]
         return {"results": r if pagina == 1 else [], "total_pages": 1}
@@ -222,6 +233,15 @@ api.episodi[(1, 4)] = [(d50 - dt.timedelta(3)).isoformat()]
 notte(c, api, d50)
 atteso("stagione 4 uscita: la serie rientra da sola", sync(d50)[1], "Serie Uno")
 c.commit()
+
+# consigliati
+c.execute("INSERT INTO titoli (id, tipo, tmdb_id, titolo) VALUES ('tv:53','tv',53,'Nascosta')")
+c.execute("INSERT INTO nascosti VALUES ('tv:53', ?)", (d50.isoformat(),))
+c.execute("UPDATE miei SET mi_piace=1 WHERE titolo_id='tv:1'"); c.commit()
+n = logica.calcola_consigliati(c, api, d50); c.commit()
+k = [(r["titolo"], r["motivo"]) for r in c.execute("SELECT t.titolo, k.motivo FROM consigliati k JOIN titoli t ON t.id=k.titolo_id")]
+atteso("consigliati: solo quello su un mio servizio, col motivo", [f"{t} {m}" for t, m in k], "Consigliata Netflix per «Serie Uno» e altri 1")
+atteso("...niente miei, nascosti, voto basso o senza servizio", [str(n)], "1")
 
 # notifica: un solo messaggio, poi niente
 aggiorna.notifica(c, {"Netflix": 1}, prova=True)

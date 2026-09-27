@@ -268,6 +268,63 @@ def sincronizza_da_vedere(c, oggi, solo=None):
     return tolti, rimessi
 
 
+CONSIGLI_PESO = {"mi_piace": 3.0, "visto": 2.0, "lista": 1.0}
+CONSIGLI_VOTO_MIN, CONSIGLI_VOTI_MIN = 6.3, 50     # sotto, TMDB consiglia anche cose che nessuno ha visto
+CONSIGLI_CANDIDATI, CONSIGLI_TENUTI = 40, 24
+
+
+def calcola_consigliati(c, api, oggi):
+    """Somma i «consigliati» di TMDB di ogni mio titolo, pesati: mi piace > visto >
+    in lista, e piu' in alto nella lista di TMDB = piu' punti. Scarta i miei, i
+    nascosti, quelli con pochi voti o voto basso, e quelli che non si vedono su
+    un servizio seguito; spinta del 25% a chi e' su un servizio a cui sono
+    abbonato. Il motivo mostrato e' il titolo che ha contribuito di piu'.
+    Sostituisce l'intera tabella: ritorna quanti consigli ha tenuto."""
+    miei = {r[0] for r in c.execute("SELECT titolo_id FROM miei")}
+    via = {r[0] for r in c.execute("SELECT titolo_id FROM nascosti")}
+    dv = da_vedere(c, oggi)
+    punti, motivi, dati = {}, {}, {}
+    semi = c.execute("SELECT t.*, m.mi_piace, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id").fetchall()
+    for s in semi:
+        peso = CONSIGLI_PESO["mi_piace"] if s["mi_piace"] else \
+            CONSIGLI_PESO["visto"] if finito(c, s, oggi, dv) else CONSIGLI_PESO["lista"]
+        for i, x in enumerate(api.consigliati(s["tipo"], s["tmdb_id"])[:20]):
+            tipo = x.get("media_type") or s["tipo"]
+            if tipo not in ("movie", "tv"):
+                continue
+            tid = f"{tipo}:{x['id']}"
+            if tid in miei or tid in via or x.get("adult"):
+                continue
+            if (x.get("vote_count") or 0) < CONSIGLI_VOTI_MIN or (x.get("vote_average") or 0) < CONSIGLI_VOTO_MIN:
+                continue
+            p = peso * (1 - i / 25)
+            punti[tid] = punti.get(tid, 0) + p
+            motivi.setdefault(tid, {}).setdefault(s["titolo"], 0)
+            motivi[tid][s["titolo"]] += p
+            dati[tid] = (tipo, x)
+    serv = {r["id"]: r for r in c.execute("SELECT * FROM servizi WHERE seguito=1")}
+    mappa = {r["id"]: r["servizio_id"] for r in c.execute("SELECT id, servizio_id FROM provider WHERE servizio_id IS NOT NULL")}
+    tenuti = []
+    for tid in sorted(punti, key=punti.get, reverse=True)[:CONSIGLI_CANDIDATI]:
+        tipo, x = dati[tid]
+        it = api.provider_di(tipo, x["id"])
+        dove = sorted({mappa[p["provider_id"]] for o in ABBONAMENTO for p in it.get(o, [])
+                       if mappa.get(p["provider_id"]) in serv})
+        if not dove:
+            continue
+        abbonato = any(serv[d]["stato"] == "attivo" for d in dove)
+        primo = max(motivi[tid].items(), key=lambda y: y[1])[0]
+        altri = len(motivi[tid]) - 1
+        motivo = f"per «{primo}»" + (f" e altri {altri}" if altri else "")
+        tenuti.append((tid, tipo, x, punti[tid] * (1.25 if abbonato else 1), motivo, dove))
+    tenuti.sort(key=lambda y: y[3], reverse=True)
+    c.execute("DELETE FROM consigliati")
+    for tid, tipo, x, p, motivo, dove in tenuti[:CONSIGLI_TENUTI]:
+        salva_base(c, tipo, x)
+        c.execute("INSERT INTO consigliati VALUES (?,?,?,?,?)", (tid, round(p, 3), motivo, ",".join(map(str, dove)), iso(oggi)))
+    return min(len(tenuti), CONSIGLI_TENUTI)
+
+
 def cronologia_a_rischio(s):
     """Data da cui il servizio puo' cancellare la cronologia, se si puo' calcolare."""
     if s["stato"] != "disdetto" or not s["fine"] or not s["conserva_mesi"]:

@@ -207,6 +207,13 @@ def main():
             c.rollback(); errori += 1
             log(f"catalogo: {e}")
 
+    try:
+        n = logica.calcola_consigliati(c, api, oggi); c.commit()
+        log(f"consigliati: {n}")
+    except tmdb.ErroreTMDB as e:
+        c.rollback()
+        log(f"consigliati: {e} (restano quelli di ieri)")
+
     for t in nuovi:
         log(f"evento: {t}")
     notifica(c, novita, o.prova); c.commit()

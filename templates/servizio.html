@@ -49,6 +49,13 @@
   {{ mm.griglia(altri, 'Nessun altro.') }}
 </section>
 
+{% if consigliati %}
+<section>
+  <h2 class="sezione-titolo">Consigliati per te su {{ s.nome }}</h2>
+  {{ mm.fila_consigliati(consigliati, csrf, request.path) }}
+</section>
+{% endif %}
+
 <section>
   <h2 class="sezione-titolo">Nuovi nel catalogo · ultimi 30 giorni</h2>
   {{ mm.griglia(nuovi, 'Nessuna novità rilevata negli ultimi 30 giorni.') }}

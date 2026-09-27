@@ -34,6 +34,13 @@
   </div>
 </section>
 
+{% if consigliati %}
+<section>
+  <h2 class="sezione-titolo">Consigliati per te</h2>
+  {{ mm.fila_consigliati(consigliati, csrf, '/') }}
+</section>
+{% endif %}
+
 {% if prossime %}
 <section>
   <h2 class="sezione-titolo">In arrivo</h2>

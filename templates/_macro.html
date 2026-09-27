@@ -24,6 +24,25 @@
 {% endif %}
 {% endmacro %}
 
+{# Fila orizzontale di consigli, con motivo e i due tasti. `csrf` passato a mano:
+   le macro importate non vedono il contesto della pagina. #}
+{% macro fila_consigliati(elenco, csrf, torna) %}
+<div class="fila">
+{% for x in elenco %}
+  <div class="consigliato">
+    {{ copertina(x) }}
+    <small class="motivo">{{ x.motivo }}</small>
+    <div class="consigliato-azioni">
+      <form method="post" action="/consigliati"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ x.t.id }}"><input type="hidden" name="torna" value="{{ torna }}">
+        <button class="interruttore piccolo" name="azione" value="aggiungi">+ Da vedere</button></form>
+      <form method="post" action="/consigliati"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ x.t.id }}"><input type="hidden" name="torna" value="{{ torna }}">
+        <button class="collegamento tenue-link" name="azione" value="nascondi" title="Non mi interessa: non comparirà più">Non mi interessa</button></form>
+    </div>
+  </div>
+{% endfor %}
+</div>
+{% endmacro %}
+
 {% macro logo_servizio(s, misura='w92') %}
 {% if s.logo %}<img class="logo-servizio" src="{{ img(s.logo, misura) }}" alt="" width="40" height="40">{% else %}<span class="logo-servizio segnaposto">{{ s.nome[:1] }}</span>{% endif %}
 {% endmacro %}

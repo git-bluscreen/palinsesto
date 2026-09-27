@@ -274,3 +274,13 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 a.riga-dove:hover { text-decoration: none; background: var(--superficie-2); border-radius: 10px; }
 .riga-dove > span:first-of-type { flex: 1; min-width: 0; }
 .freccia { color: var(--tenue); font-size: 1.3rem; line-height: 1; }
+
+/* --- consigliati: fila che scorre di lato, anche col pollice --- */
+.fila { display: grid; grid-auto-flow: column; grid-auto-columns: 128px; gap: .75rem; overflow-x: auto;
+        scroll-snap-type: x proximity; padding-bottom: .5rem; margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+@media (min-width: 620px) { .fila { grid-auto-columns: 150px; } }
+.consigliato { display: grid; gap: .3rem; align-content: start; scroll-snap-align: start; min-width: 0; }
+.motivo { color: var(--tenue); font-size: .72rem; line-height: 1.3; }
+.consigliato-azioni { display: grid; gap: .2rem; }
+.consigliato-azioni form { margin: 0; }
+.tenue-link { color: var(--tenue); font-size: .75rem; }

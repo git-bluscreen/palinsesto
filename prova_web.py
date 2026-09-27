@@ -29,6 +29,8 @@ csrf = re.search(r'name="csrf" value="([^"]+)"', s.get(B + "/t/tv/1").text).grou
 ok("«Dove lo trovi» porta alla pagina del servizio", 'href="/servizio/' in s.get(B + "/t/tv/1").text)
 ok("servizio inesistente -> 404", s.get(B + "/servizio/9999").status_code == 404)
 r = s.post(B + "/t/tv/1", data=dict(azione="mi_piace")); ok("POST senza CSRF -> 400", r.status_code == 400)
+if "♥ Mi piace" in s.get(B + "/t/tv/1").text:          # prova.py puo' averlo lasciato gia' acceso
+    s.post(B + "/t/tv/1", data=dict(azione="mi_piace", csrf=csrf))
 r = s.post(B + "/t/tv/1", data=dict(azione="mi_piace", csrf=csrf)); ok("mi piace", r.status_code == 200 and "♥ Mi piace" in r.text)
 r = s.post(B + "/t/tv/1", data=dict(azione="stagione", n=3, csrf=csrf)); ok("stagione 3 vista", r.status_code == 200 and r.text.count('aria-pressed="true" title="Vista"') >= 1)
 for n in (1, 2, 3):   # nessuna spunta: la prova parte pulita
@@ -58,6 +60,11 @@ r = s.post(B + "/abbonamenti/1", data=dict(stato="attivo", ciclo="mese", rinnovo
 r = s.post(B + "/impostazioni", data=dict(azione="seguito", servizio=6, csrf=csrf)); ok("smetti di seguire un servizio", r.status_code == 200 and "Non seguito" in r.text)
 r = s.post(B + "/impostazioni", data=dict(azione="seguito", servizio=6, csrf=csrf))
 r = s.get(B + "/"); ok("home: Conviene? presente", "Conviene?" in r.text and "Netflix" in r.text)
+ok("home: consigliati col motivo", "Consigliati per te" in r.text and "Consigliata Netflix" in r.text and "per «Serie Uno»" in r.text)
+ok("pagina servizio: consigliati", "Consigliati per te su Netflix" in s.get(B + "/servizio/1").text)
+r = s.post(B + "/consigliati", data=dict(azione="nascondi", titolo="tv:50", csrf=csrf))
+ok("«Non mi interessa»: sparisce", r.status_code == 200 and "Consigliata Netflix" not in r.text)
+r = s.post(B + "/consigliati", data=dict(azione="nascondi", titolo="tv:999", csrf=csrf)); ok("consiglio inesistente -> 400", r.status_code == 400)
 h = s.get(B + "/").headers; ok("CSP e no-store", "default-src 'none'" in h["Content-Security-Policy"] and h["Cache-Control"] == "no-store")
 if len(sys.argv) > 1:
     r = requests.get(f"http://{sys.argv[1]}:45091/accesso"); ok("IP non ammesso -> 403", r.status_code == 403, r.status_code)

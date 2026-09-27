@@ -328,6 +328,20 @@ def schede_elenco(righe):
     return out
 
 
+def consigliati(sid=None, quanti=24):
+    """Consigli ricalcolati la notte, per le griglie: dove si vedono e perche'."""
+    nomi = {r["id"]: r["nome"] for r in c().execute("SELECT id, nome FROM servizi")}
+    out = []
+    for r in c().execute("""SELECT t.*, k.motivo, k.servizi FROM consigliati k JOIN titoli t ON t.id=k.titolo_id
+                            WHERE NOT EXISTS (SELECT 1 FROM miei m WHERE m.titolo_id=k.titolo_id)
+                            ORDER BY k.punteggio DESC"""):
+        ids = [int(x) for x in (r["servizi"] or "").split(",") if x]
+        if sid and sid not in ids:
+            continue
+        out.append(dict(t=r, mio=None, motivo=r["motivo"], dove={i: nomi[i] for i in ids if i in nomi}))
+    return out[:quanti]
+
+
 # --- pagine -------------------------------------------------------------------
 @app.route("/")
 def casa():
@@ -347,7 +361,8 @@ def casa():
     eventi = c().execute("""SELECT e.*, t.poster, t.titolo AS nome FROM eventi e LEFT JOIN titoli t ON t.id=e.titolo_id
                             WHERE e.tipo != 'catalogo' AND e.quando >= ? ORDER BY e.quando DESC, e.id DESC LIMIT 12""",
                          ((o - dt.timedelta(days=14)).isoformat(),)).fetchall()
-    return render_template("casa.html", consigli=consigli, prossime=prossime[:12], eventi=eventi,
+    return render_template("casa.html", consigli=consigli, prossime=prossime[:12], eventi=eventi, consigliati=consigliati(),
+                           lista_dv=int(db.meta(c(), "lista_da_vedere") or 0),
                            ultimo_giro=db.meta(c(), "ultimo_giro"), senza_chiave=api() is None,
                            vuoto=not c().execute("SELECT 1 FROM miei").fetchone())
 
@@ -472,6 +487,30 @@ def scheda_azione(tipo, tmdb_id):
     return redirect(url_for("scheda", tipo=tipo, tmdb_id=tmdb_id) + ancora)
 
 
+@app.route("/consigliati", methods=["POST"])
+def consigliati_azione():
+    tid = request.form.get("titolo", "")
+    m = re.fullmatch(r"(movie|tv):(\d+)", tid)
+    if not m or not c().execute("SELECT 1 FROM titoli WHERE id=?", (tid,)).fetchone():
+        abort(400)
+    az = request.form.get("azione")
+    if az == "nascondi":
+        c().execute("INSERT OR IGNORE INTO nascosti VALUES (?,?)", (tid, oggi().isoformat()))
+    elif az == "aggiungi":
+        lid = int(db.meta(c(), "lista_da_vedere") or 0)
+        mio(tid, crea=True)
+        if lid:
+            c().execute("INSERT OR IGNORE INTO lista_titoli VALUES (?,?,?)", (lid, tid, oggi().isoformat()))
+        c().commit()
+        assicura_scheda(m.group(1), int(m.group(2)))
+    else:
+        abort(400)
+    c().execute("DELETE FROM consigliati WHERE titolo_id=?", (tid,))
+    c().commit()
+    torna = request.form.get("torna", "")
+    return redirect(torna if torna.startswith("/") and not torna.startswith("//") else url_for("casa"))
+
+
 @app.route("/liste")
 def liste():
     righe = c().execute("""SELECT l.*, COUNT(x.titolo_id) AS n FROM liste l LEFT JOIN lista_titoli x ON x.lista_id=l.id
@@ -569,6 +608,7 @@ def servizio(sid):
                         (sid, dal)).fetchall()
     provider = c().execute("SELECT nome FROM provider WHERE servizio_id=? ORDER BY priorita", (sid,)).fetchall()
     return render_template("servizio.html", s=s, x=x, da_vedere=da_vedere_qui, altri=altri,
+                           consigliati=consigliati(sid, 12), lista_dv=int(db.meta(c(), "lista_da_vedere") or 0),
                            nuovi=schede_elenco(nuovi), provider=[p["nome"] for p in provider], o=o)
 
 

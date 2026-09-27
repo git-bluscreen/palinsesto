@@ -78,6 +78,12 @@ class TMDB:
     def stagione(self, tmdb_id, numero):
         return self.get(f"/tv/{tmdb_id}/season/{numero}", language=LINGUA)
 
+    def consigliati(self, tipo, tmdb_id):
+        return (self.get(f"/{tipo}/{tmdb_id}/recommendations", language=LINGUA) or {}).get("results", [])
+
+    def provider_di(self, tipo, tmdb_id):
+        return (self.get(f"/{tipo}/{tmdb_id}/watch/providers") or {}).get("results", {}).get(REGIONE, {})
+
     def cerca(self, testo, anno=None):
         r = (self.get("/search/multi", query=testo, language=LINGUA, include_adult="false") or {}).get("results", [])
         r = [x for x in r if x.get("media_type") in ("movie", "tv")]

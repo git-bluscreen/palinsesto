@@ -145,6 +145,20 @@ CREATE TABLE IF NOT EXISTS catalogo (
   PRIMARY KEY (servizio_id, titolo_id, dal)
 );
 
+-- consigli ricalcolati ogni notte dai «consigliati» di TMDB dei miei titoli
+CREATE TABLE IF NOT EXISTS consigliati (
+  titolo_id TEXT PRIMARY KEY REFERENCES titoli(id) ON DELETE CASCADE,
+  punteggio REAL, motivo TEXT,
+  servizi TEXT,                    -- id dei servizi seguiti dove si vede, separati da virgola
+  calcolato TEXT
+);
+
+-- «Non mi interessa»: mai piu' fra i consigliati
+CREATE TABLE IF NOT EXISTS nascosti (
+  titolo_id TEXT PRIMARY KEY,
+  quando TEXT
+);
+
 CREATE INDEX IF NOT EXISTS disp_aperte ON disponibilita(titolo_id) WHERE fino IS NULL;
 CREATE INDEX IF NOT EXISTS eventi_quando ON eventi(quando);
 CREATE INDEX IF NOT EXISTS catalogo_aperti ON catalogo(servizio_id) WHERE fino IS NULL;
