@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}{{ s.nome }} · Palinsesto{% endblock %}
+{% block corpo %}
+<header class="servizio-testa">
+  {{ mm.logo_servizio(s, 'w154') }}
+  <div>
+    <h1>{{ s.nome }}</h1>
+    <p>
+      {% if x %}<span class="etichetta v-{{ x.verdetto }}">{{ mm.ETICHETTE[x.verdetto] }}</span>{% endif %}
+      {% if x and x.attivo %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta">non abbonato</span>{% endif %}
+      {% if not s.seguito %}<span class="etichetta">non seguito</span>{% endif %}
+    </p>
+  </div>
+</header>
+
+<section class="riquadro servizio-stato">
+  {% if x %}<p><b>{{ x.testo }}</b></p>{% endif %}
+  <p class="nota">
+    {% if s.stato == 'attivo' %}Abbonamento attivo{% if s.rinnovo %}, rinnovo il {{ s.rinnovo|gm }} ({{ s.rinnovo|fra }}){% endif %}{% if s.prezzo %} · {{ s.prezzo|euro }}/{{ s.ciclo }}{% endif %}.
+    {% elif s.stato == 'disdetto' %}Disdetto{% if s.fine %}: {{ 'finisce' if s.fine >= o.isoformat() else 'finito' }} il {{ s.fine|gm }}{% endif %}.
+    {% else %}Non sei abbonato.{% endif %}
+    {% if x and x.rischio %}<br><span class="{{ 'allarme' if x.rischio_vicino else '' }}">Cronologia e preferiti a rischio dal {{ x.rischio|gm }}.</span>{% endif %}
+    <a href="{{ url_for('abbonamenti') }}#s{{ s.id }}">Modifica l'abbonamento ›</a>
+  </p>
+</section>
+
+<section>
+  <h2 class="sezione-titolo">Da vedere qui adesso · {{ da_vedere|length }}</h2>
+  {{ mm.griglia(da_vedere, 'Niente dei tuoi titoli da vedere su ' ~ s.nome ~ ' adesso.') }}
+</section>
+
+{% if x and x.attese %}
+<section>
+  <h2 class="sezione-titolo">In arrivo</h2>
+  <ul class="elenco-righe">
+  {% for quando, y in x.attese %}
+    <li><a href="{{ link(y.t.id) }}">
+      {% if y.t.poster %}<img src="{{ img(y.t.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% endif %}
+      <span><b>{{ y.t.titolo }}</b><small>{{ quando|gm }} ({{ quando|fra }})</small></span>
+    </a></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section>
+  <h2 class="sezione-titolo">Gli altri tuoi titoli su {{ s.nome }} · {{ altri|length }}</h2>
+  {{ mm.griglia(altri, 'Nessun altro.') }}
+</section>
+
+<section>
+  <h2 class="sezione-titolo">Nuovi nel catalogo · ultimi 30 giorni</h2>
+  {{ mm.griglia(nuovi, 'Nessuna novità rilevata negli ultimi 30 giorni.') }}
+</section>
+
+<p class="nota">Provider TMDB che contano come {{ s.nome }}: {{ provider|join(', ') or 'nessuno' }} — si cambiano in <a href="{{ url_for('impostazioni') }}">Impostazioni</a>.</p>
+{% endblock %}

@@ -262,3 +262,15 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 .spunta:disabled { cursor: default; opacity: .4; }
 .stagioni li.vista { opacity: 1; }
 .stagioni li.vista > .stagione-testa { opacity: .65; }
+
+/* --- pagina servizio --- */
+.servizio-testa { display: flex; gap: 1rem; align-items: center; margin: .5rem 0 1rem; }
+.servizio-testa .logo-servizio { width: 64px; height: 64px; border-radius: 14px; }
+.servizio-testa h1 { font-size: 1.5rem; }
+.servizio-testa p { margin: .3rem 0 0; display: flex; gap: .3rem; flex-wrap: wrap; }
+.servizio-stato p { margin: .2rem 0; }
+.dove li { padding: 0; }
+.riga-dove { display: flex; gap: .7rem; align-items: center; padding: .5rem .7rem; color: var(--testo); flex: 1; min-width: 0; }
+a.riga-dove:hover { text-decoration: none; background: var(--superficie-2); border-radius: 10px; }
+.riga-dove > span:first-of-type { flex: 1; min-width: 0; }
+.freccia { color: var(--tenue); font-size: 1.3rem; line-height: 1; }

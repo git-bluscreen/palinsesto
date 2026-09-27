@@ -545,6 +545,33 @@ def lista(chi):
     return render_template("lista.html", l=l, chi=chi, nome=nome, elenco=elenco, servizi=servizi, f=filtri)
 
 
+@app.route("/servizio/<int:sid>")
+def servizio(sid):
+    s = c().execute("SELECT * FROM servizi WHERE id=?", (sid,)).fetchone()
+    if not s:
+        abort(404)
+    o = oggi()
+    logica.scadenze(c(), o); c().commit()
+    s = c().execute("SELECT * FROM servizi WHERE id=?", (sid,)).fetchone()
+    x = next((v for v in logica.consigli(c(), o) if v["s"]["id"] == sid), None)
+    dv = logica.da_vedere(c(), o)
+    # tutti i miei titoli che si vedono qui con l'abbonamento, adesso
+    miei_qui = [t for t in c().execute("SELECT t.* FROM miei m JOIN titoli t ON t.id=m.titolo_id ORDER BY t.titolo")
+                if sid in logica.servizi_disponibili(c(), t["id"])]
+    elenco = schede_elenco(miei_qui)
+    for y in elenco:
+        y["dv"] = dv.get(y["t"]["id"])
+    da_vedere_qui = [y for y in elenco if y["dv"] and y["dv"]["pronte"]]
+    altri = [y for y in elenco if not (y["dv"] and y["dv"]["pronte"])]
+    dal = (o - dt.timedelta(days=30)).isoformat()
+    nuovi = c().execute("""SELECT t.*, e.quando FROM eventi e JOIN titoli t ON t.id=e.titolo_id
+                           WHERE e.tipo='catalogo' AND e.servizio_id=? AND e.quando>=? ORDER BY e.quando DESC, e.id DESC LIMIT 40""",
+                        (sid, dal)).fetchall()
+    provider = c().execute("SELECT nome FROM provider WHERE servizio_id=? ORDER BY priorita", (sid,)).fetchall()
+    return render_template("servizio.html", s=s, x=x, da_vedere=da_vedere_qui, altri=altri,
+                           nuovi=schede_elenco(nuovi), provider=[p["nome"] for p in provider], o=o)
+
+
 @app.route("/novita")
 def novita():
     giorni = 30

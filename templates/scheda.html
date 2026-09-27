@@ -40,6 +40,7 @@
     <ul class="dove">
     {% for d in disp %}
       <li class="{{ 'seguito' if d.seguito else 'altro' }}">
+        {% if d.sid %}<a class="riga-dove" href="{{ url_for('servizio', sid=d.sid) }}">{% else %}<span class="riga-dove">{% endif %}
         {% if d.plogo %}<img src="{{ img(d.plogo, 'w92') }}" alt="" width="36" height="36">{% endif %}
         <span><b>{{ d.servizio or d.provider }}</b>
           {% if d.servizio and d.provider != d.servizio %}<small>{{ d.provider }}</small>{% endif %}
@@ -47,6 +48,7 @@
         {% if d.sid and d.offerta in ('flatrate', 'free', 'ads') %}
           {% if abbonato(d) %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta non-abbonato">non abbonato</span>{% endif %}
         {% endif %}
+        {% if d.sid %}<span class="freccia" aria-hidden="true">›</span></a>{% else %}</span>{% endif %}
       </li>
     {% endfor %}
     </ul>
