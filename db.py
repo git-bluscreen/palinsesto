@@ -153,6 +153,17 @@ CREATE TABLE IF NOT EXISTS consigliati (
   calcolato TEXT
 );
 
+-- cosa arriva su ogni servizio (non solo i miei titoli), ricalcolato ogni notte
+CREATE TABLE IF NOT EXISTS in_arrivo (
+  servizio_id INTEGER REFERENCES servizi(id) ON DELETE CASCADE,
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  data TEXT NOT NULL,
+  genere TEXT,                     -- 'nuova serie' / 'stagione' / 'episodi'
+  cosa TEXT,                       -- «Stagione 3», «S02E05»...
+  calcolato TEXT,
+  PRIMARY KEY (servizio_id, titolo_id)
+);
+
 -- «Non mi interessa»: mai piu' fra i consigliati
 CREATE TABLE IF NOT EXISTS nascosti (
   titolo_id TEXT PRIMARY KEY,

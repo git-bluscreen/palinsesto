@@ -119,9 +119,9 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 }
 
 /* --- consigli --- */
-.consigli { display: grid; gap: .6rem; grid-template-columns: 1fr; }
-@media (min-width: 620px) { .consigli { grid-template-columns: 1fr 1fr; } }
-@media (min-width: 980px) { .consigli { grid-template-columns: 1fr 1fr 1fr; } }
+.consigli { display: grid; gap: .6rem; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 1fr; }   /* tutte alte come la piu' alta */
+@media (min-width: 620px) { .consigli { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 980px) { .consigli { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .consiglio {
   display: flex; gap: .8rem; align-items: flex-start; color: var(--testo); background: var(--superficie);
   border: 1px solid var(--bordo); border-left: 4px solid var(--bordo); border-radius: var(--raggio); box-shadow: var(--ombra); padding: .8rem .9rem;
@@ -248,20 +248,25 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 .candidato { display: flex; gap: .6rem; align-items: center; color: var(--testo); font-size: .9rem; }
 .candidato img { border-radius: 4px; }
 
-/* --- episodi --- */
+/* --- episodi: la stagione stessa si apre --- */
 .stagioni li { flex-direction: column; align-items: stretch; gap: .4rem; }
-.stagione-testa { display: flex; gap: .75rem; align-items: center; }
+.stagione-testa { display: flex; gap: .75rem; align-items: flex-start; }
+.stagione-testa > form .spunta { margin-top: .1rem; }
 .stagione-nome { flex: 1; min-width: 0; }
+.stagione-dettagli { flex: 1; min-width: 0; }
+.stagione-dettagli > summary { cursor: pointer; list-style: none; display: block; position: relative; padding-right: 1.5rem; }
+.stagione-dettagli > summary::-webkit-details-marker { display: none; }
+.stagione-dettagli > summary::after { content: "›"; position: absolute; right: .2rem; top: .05rem; font-size: 1.4rem; line-height: 1;
+                                      color: var(--tenue); transition: transform .15s; }
+.stagione-dettagli[open] > summary::after { transform: rotate(90deg); }
 .spunta.parziale { border-color: var(--ok); color: var(--ok); }
-.episodi summary { cursor: pointer; color: var(--accento); font-size: .85rem; padding-left: calc(32px + .75rem); }
-.episodi ol { list-style: none; margin: .4rem 0 0; padding: 0; display: grid; gap: .3rem; }
-.episodi ol li { flex-direction: row; align-items: center; gap: .6rem; border: 0; background: var(--superficie-2); padding: .35rem .5rem; border-radius: 8px; }
-.episodi ol li.visto { opacity: .6; }
-.episodi ol li.futuro { opacity: .5; }
-.spunta.piccola { width: 26px; height: 26px; border-radius: 6px; font-size: .8rem; }
+ol.episodi { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: .3rem; }
+ol.episodi li { display: flex; flex-direction: row; align-items: center; gap: .6rem; border: 0; background: var(--superficie-2); padding: .35rem .5rem; border-radius: 8px; }
+ol.episodi li.visto, ol.episodi li.futuro { opacity: .6; }
+.spunta.piccola { width: 26px; height: 26px; border-radius: 6px; font-size: .8rem; flex: none; }
 .spunta:disabled { cursor: default; opacity: .4; }
 .stagioni li.vista { opacity: 1; }
-.stagioni li.vista > .stagione-testa { opacity: .65; }
+.stagioni li.vista .stagione-nome b { color: var(--tenue); }
 
 /* --- pagina servizio --- */
 .servizio-testa { display: flex; gap: 1rem; align-items: center; margin: .5rem 0 1rem; }
@@ -283,4 +288,15 @@ a.riga-dove:hover { text-decoration: none; background: var(--superficie-2); bord
 .motivo { color: var(--tenue); font-size: .72rem; line-height: 1.3; }
 .consigliato-azioni { display: grid; gap: .2rem; }
 .consigliato-azioni form { margin: 0; }
-.tenue-link { color: var(--tenue); font-size: .75rem; }
+button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-align: left; }
+
+/* --- in arrivo --- */
+.genere-stagione { color: var(--ok); font-weight: 600; }
+.genere-nuova-serie { color: var(--accento); font-weight: 600; }
+.tuo { color: var(--ok); font-weight: 600; }
+.mese { margin-top: 1.5rem; }
+.elenco-righe a > span { min-width: 0; }
+
+/* «Conviene?»: schede tutte uguali, i testi lunghi si tagliano invece di allungarle */
+.consiglio { height: 100%; min-width: 0; }
+.consiglio-testo > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

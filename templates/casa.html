@@ -43,15 +43,26 @@
 
 {% if prossime %}
 <section>
-  <h2 class="sezione-titolo">In arrivo</h2>
+  <h2 class="sezione-titolo">In arrivo dai tuoi titoli</h2>
   <ul class="elenco-righe">
-  {% for quando, t, cosa in prossime %}
+  {% for quando, t, cosa, dove in prossime %}
     <li><a href="{{ link(t.id) }}">
       {% if t.poster %}<img src="{{ img(t.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% endif %}
-      <span><b>{{ t.titolo }}</b><small>{{ cosa }} · {{ quando|gm }} ({{ quando|fra }})</small></span>
+      <span><b>{{ t.titolo }}</b><small>{{ cosa }} · {{ quando|gm }} ({{ quando|fra }})</small>
+        <span class="servizi-mini">{% for sid, nome in dove.items() %}<span class="chip">{{ nome }}</span>{% else %}<span class="chip">su nessun tuo servizio, per ora</span>{% endfor %}</span></span>
     </a></li>
   {% endfor %}
   </ul>
+</section>
+{% endif %}
+
+{% if conta_arrivi %}
+<section>
+  <h2 class="sezione-titolo">In arrivo sulle piattaforme <a class="tutti" href="{{ url_for('in_arrivo') }}">tutto</a></h2>
+  <nav class="schede-servizi" aria-label="In arrivo per servizio">
+    {% for s in conta_arrivi %}<a href="{{ url_for('in_arrivo', servizio=s.id) }}">{{ s.nome }} · {{ s.n }}</a>{% endfor %}
+  </nav>
+  <ul class="elenco-righe">{% for x in arrivi %}{{ mm.riga_arrivo(x) }}{% endfor %}</ul>
 </section>
 {% endif %}
 

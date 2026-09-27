@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}In arrivo · Palinsesto{% endblock %}
+{% block corpo %}
+<h1 class="pagina-titolo">In arrivo</h1>
+<nav class="schede-servizi" aria-label="Servizio">
+  <a href="{{ url_for('in_arrivo') }}" {% if not sid %}aria-current="page"{% endif %}>Tutti</a>
+  {% for s in conta %}<a href="{{ url_for('in_arrivo', servizio=s.id) }}" {% if sid == s.id %}aria-current="page"{% endif %}>{{ s.nome }} · {{ s.n }}</a>{% endfor %}
+</nav>
+{% if arrivi %}
+  {% set ns = namespace(mese='') %}
+  {% for x in arrivi %}
+    {% set mese = x.r.data[:7] %}
+    {% if mese != ns.mese %}
+      {% if not loop.first %}</ul>{% endif %}
+      <h2 class="sezione-titolo mese">{{ ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'][mese[5:]|int - 1] }} {{ mese[:4] }}</h2>
+      <ul class="elenco-righe">
+      {% set ns.mese = mese %}
+    {% endif %}
+    {{ mm.riga_arrivo(x) }}
+  {% endfor %}
+  </ul>
+{% else %}
+  <p class="vuoto">Niente in arrivo{% if sid %} su questo servizio{% endif %} nei prossimi 60 giorni, o il calcolo notturno non è ancora girato.</p>
+{% endif %}
+<p class="nota">Nei prossimi 60 giorni: <span class="genere-stagione">stagioni nuove</span> di serie già sul servizio, serie originali che debuttano (<span class="genere-nuova-serie">nuova serie</span>) e, per le serie che segui, anche i singoli episodi. Esclusi talk show, reality, notiziari, soap e programmi per bambini. <b>I film non ci sono</b>: nessuno annuncia con una data quando un film arriva su un servizio in Italia. NOW mostra solo le serie già in catalogo: non ha una «rete» su TMDB. Aggiornato {{ calcolato|gm if calcolato else 'mai' }}.</p>
+{% endblock %}

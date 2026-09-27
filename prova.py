@@ -61,6 +61,24 @@ class Finto:
     def provider_di(self, tipo, n):
         return {50: prov(NETFLIX), 53: prov(NETFLIX), 52: prov(NETFLIX)}.get(n, {})
 
+    oggi_finto = None       # la data del giro, per gli arrivi
+
+    def get(self, percorso, **p):
+        o = self.oggi_finto
+        piu = lambda n: (o + dt.timedelta(days=n)).isoformat()
+        if percorso == "/discover/tv" and "with_watch_providers" in p:
+            netflix = "8" in p["with_watch_providers"].split("|")
+            return {"results": [dict(id=60, name="Torna con la 2"), dict(id=61, name="Settimanale"),
+                                dict(id=63, name="Troppo lontana")] if netflix else []}
+        if percorso == "/discover/tv" and "with_networks" in p:
+            return {"results": [dict(id=62, name="Originale nuova", first_air_date=piu(20))] if p["with_networks"] == 213 else []}
+        prossimi = {60: dict(air_date=piu(10), season_number=2, episode_number=1),
+                    61: dict(air_date=piu(3), season_number=4, episode_number=5),
+                    63: dict(air_date=piu(90), season_number=1, episode_number=1)}
+        if percorso.startswith("/tv/"):
+            return {"next_episode_to_air": prossimi.get(int(percorso.split("/")[2]))}
+        return None
+
     def scopri(self, tipo, ids, pagina, dal):
         r = [x for i in ids for x in self.catalogo.get(i, []) if (x.get("title") and tipo == "movie") or (x.get("name") and tipo == "tv")]
         return {"results": r if pagina == 1 else [], "total_pages": 1}
@@ -234,13 +252,25 @@ notte(c, api, d50)
 atteso("stagione 4 uscita: la serie rientra da sola", sync(d50)[1], "Serie Uno")
 c.commit()
 
+# in arrivo sulle piattaforme
+api.oggi_finto = d50
+conta = aggiorna.aggiorna_in_arrivo(c, api, d50); c.commit()
+arr = {r["titolo_id"]: (r["genere"], r["cosa"]) for r in c.execute("SELECT * FROM in_arrivo WHERE servizio_id=(SELECT id FROM servizi WHERE nome='Netflix')")}
+atteso("arrivi Netflix: stagione nuova e serie nuova; l'episodio di una serie non mia no", [str(sorted(arr.items()))],
+       "[('tv:60', ('stagione', 'Stagione 2')), ('tv:62', ('nuova serie', 'Nuova serie'))]")
+atteso("...oltre 60 giorni esclusa, altri servizi vuoti", [f"{conta['Netflix']} {conta['Disney+']}"], "2 0")
+c.execute("INSERT OR IGNORE INTO titoli (id, tipo, tmdb_id, titolo) VALUES ('tv:61','tv',61,'Settimanale')")
+c.execute("INSERT INTO miei (titolo_id, aggiunto) VALUES ('tv:61', ?)", (d50.isoformat(),))
+conta = aggiorna.aggiorna_in_arrivo(c, api, d50); c.commit()
+atteso("se la serie è mia, anche il singolo episodio", [str(c.execute("SELECT cosa FROM in_arrivo WHERE titolo_id='tv:61'").fetchone()[0])], "S04E05")
+
 # consigliati
 c.execute("INSERT INTO titoli (id, tipo, tmdb_id, titolo) VALUES ('tv:53','tv',53,'Nascosta')")
 c.execute("INSERT INTO nascosti VALUES ('tv:53', ?)", (d50.isoformat(),))
 c.execute("UPDATE miei SET mi_piace=1 WHERE titolo_id='tv:1'"); c.commit()
 n = logica.calcola_consigliati(c, api, d50); c.commit()
 k = [(r["titolo"], r["motivo"]) for r in c.execute("SELECT t.titolo, k.motivo FROM consigliati k JOIN titoli t ON t.id=k.titolo_id")]
-atteso("consigliati: solo quello su un mio servizio, col motivo", [f"{t} {m}" for t, m in k], "Consigliata Netflix per «Serie Uno» e altri 1")
+atteso("consigliati: solo quello su un mio servizio, col motivo", [f"{t} {m}" for t, m in k], "Consigliata Netflix per «Serie Uno» e altri")   # quanti «altri» dipende dai titoli dei casi precedenti
 atteso("...niente miei, nascosti, voto basso o senza servizio", [str(n)], "1")
 
 # notifica: un solo messaggio, poi niente

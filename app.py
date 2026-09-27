@@ -328,6 +328,26 @@ def schede_elenco(righe):
     return out
 
 
+def arrivi(sid=None, quanti=None):
+    """Cosa arriva sui servizi (tabella in_arrivo): un elemento per titolo, con
+    tutti i servizi su cui arriva, i miei segnati."""
+    q = """SELECT a.*, s.nome AS servizio, t.titolo, t.poster, t.tipo,
+                  EXISTS(SELECT 1 FROM miei m WHERE m.titolo_id=a.titolo_id) AS mio
+           FROM in_arrivo a JOIN servizi s ON s.id=a.servizio_id JOIN titoli t ON t.id=a.titolo_id
+           WHERE s.seguito=1 AND a.data >= ?""" + (" AND a.servizio_id=?" if sid else "") + " ORDER BY a.data, t.titolo"
+    out = {}
+    for r in c().execute(q, (oggi().isoformat(), sid) if sid else (oggi().isoformat(),)):
+        x = out.setdefault(r["titolo_id"], dict(r=r, dove={}))
+        x["dove"][r["servizio_id"]] = r["servizio"]
+    v = list(out.values())
+    return v[:quanti] if quanti else v
+
+
+def conta_arrivi():
+    return c().execute("""SELECT s.id, s.nome, COUNT(*) AS n FROM in_arrivo a JOIN servizi s ON s.id=a.servizio_id
+                           WHERE s.seguito=1 AND a.data >= ? GROUP BY s.id ORDER BY s.ordine""", (oggi().isoformat(),)).fetchall()
+
+
 def consigliati(sid=None, quanti=24):
     """Consigli ricalcolati la notte, per le griglie: dove si vedono e perche'."""
     nomi = {r["id"]: r["nome"] for r in c().execute("SELECT id, nome FROM servizi")}
@@ -357,11 +377,13 @@ def casa():
         for n, f in x["in_corso"]:
             if t["prossimo_ep"]:
                 prossime.append((logica.data(t["prossimo_ep"]), t, f"{t['prossimo_ep_sigla']}"))
+    prossime = [(q, t, cosa, logica.servizi_disponibili(c(), t["id"])) for q, t, cosa in prossime]
     prossime.sort(key=lambda y: y[0])
     eventi = c().execute("""SELECT e.*, t.poster, t.titolo AS nome FROM eventi e LEFT JOIN titoli t ON t.id=e.titolo_id
                             WHERE e.tipo != 'catalogo' AND e.quando >= ? ORDER BY e.quando DESC, e.id DESC LIMIT 12""",
                          ((o - dt.timedelta(days=14)).isoformat(),)).fetchall()
     return render_template("casa.html", consigli=consigli, prossime=prossime[:12], eventi=eventi, consigliati=consigliati(),
+                           arrivi=arrivi(quanti=8), conta_arrivi=conta_arrivi(),
                            lista_dv=int(db.meta(c(), "lista_da_vedere") or 0),
                            ultimo_giro=db.meta(c(), "ultimo_giro"), senza_chiave=api() is None,
                            vuoto=not c().execute("SELECT 1 FROM miei").fetchone())
@@ -397,8 +419,8 @@ def scheda(tipo, tmdb_id):
         abort(404)
     tid = t["id"]
     m = mio(tid)
-    if m and tipo == "tv":
-        carica_episodi(tid, tmdb_id)
+    if tipo == "tv":
+        carica_episodi(tid, tmdb_id)     # anche per le serie non mie: la stagione si apre sugli episodi
     stagioni = c().execute("SELECT * FROM stagioni WHERE titolo_id=? ORDER BY numero", (tid,)).fetchall()
     episodi = {}
     for e in c().execute("SELECT * FROM episodi WHERE titolo_id=? ORDER BY stagione, numero", (tid,)):
@@ -609,7 +631,15 @@ def servizio(sid):
     provider = c().execute("SELECT nome FROM provider WHERE servizio_id=? ORDER BY priorita", (sid,)).fetchall()
     return render_template("servizio.html", s=s, x=x, da_vedere=da_vedere_qui, altri=altri,
                            consigliati=consigliati(sid, 12), lista_dv=int(db.meta(c(), "lista_da_vedere") or 0),
+                           arrivi=arrivi(sid, 10), n_arrivi=len(arrivi(sid)),
                            nuovi=schede_elenco(nuovi), provider=[p["nome"] for p in provider], o=o)
+
+
+@app.route("/in-arrivo")
+def in_arrivo():
+    sid = request.args.get("servizio", type=int)
+    return render_template("in_arrivo.html", arrivi=arrivi(sid), conta=conta_arrivi(), sid=sid,
+                           calcolato=c().execute("SELECT MAX(calcolato) FROM in_arrivo").fetchone()[0])
 
 
 @app.route("/novita")

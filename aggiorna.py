@@ -110,6 +110,59 @@ def aggiorna_catalogo(c, api, oggi):
     return novita
 
 
+# Reti TMDB delle produzioni originali di ciascun servizio (verificate il 28/09
+# con /network/<id>). NOW non ne ha una: trasmette HBO e Sky, registrati altrove,
+# quindi per NOW si vedono solo le serie gia' in catalogo con episodi in arrivo.
+RETI = {"Netflix": 213, "Prime Video": 1024, "Disney+": 2739, "Apple TV+": 2552, "Paramount+": 4330}
+# talk show, notiziari, soap, bambini, reality: il 28/09 riempivano l'elenco (WWE, X Factor, Hell's Kitchen)
+SENZA_GENERI = "10767|10763|10766|10762|10764"
+GIORNI_ARRIVO, TENUTI_ARRIVO = 60, 20
+
+
+def aggiorna_in_arrivo(c, api, oggi):
+    """Per ogni servizio seguito, due fonti:
+    - serie gia' su quel servizio in Italia con episodi in uscita nei prossimi
+      GIORNI_ARRIVO giorni: la scheda dice se e' una stagione nuova (episodio 1)
+      o la prosecuzione di una in corso;
+    - serie originali della sua rete che debuttano nello stesso periodo.
+    I film non ci sono: nessuno annuncia con una data quando un film arriva su
+    un servizio in Italia. Sostituisce la tabella: ritorna {servizio: quanti}."""
+    fino = (oggi + dt.timedelta(days=GIORNI_ARRIVO)).isoformat()
+    miei = {r[0] for r in c.execute("SELECT titolo_id FROM miei")}
+    conta = {}
+    for s in c.execute("SELECT * FROM servizi WHERE seguito=1").fetchall():
+        ids = [r["id"] for r in c.execute("SELECT id FROM provider WHERE servizio_id=?", (s["id"],))]
+        righe = {}
+        if ids:
+            r = api.get("/discover/tv", language=tmdb.LINGUA, watch_region=tmdb.REGIONE,
+                        with_watch_providers="|".join(map(str, ids)), with_watch_monetization_types="flatrate|free|ads",
+                        without_genres=SENZA_GENERI, sort_by="popularity.desc",
+                        **{"air_date.gte": oggi.isoformat(), "air_date.lte": fino}) or {}
+            for x in r.get("results", [])[:TENUTI_ARRIVO]:
+                d = api.get(f"/tv/{x['id']}", language=tmdb.LINGUA) or {}
+                p = d.get("next_episode_to_air") or {}
+                if not p.get("air_date") or not (oggi.isoformat() <= p["air_date"] <= fino):
+                    continue
+                nuova = p.get("episode_number") == 1
+                if not nuova and f"tv:{x['id']}" not in miei:
+                    continue      # il singolo episodio settimanale conta solo per le serie che seguo
+                righe[f"tv:{x['id']}"] = (x, p["air_date"], "stagione" if nuova else "episodi",
+                                          f"Stagione {p['season_number']}" if nuova else
+                                          f"S{p['season_number']:02d}E{p['episode_number']:02d}")
+        if s["nome"] in RETI:
+            r = api.get("/discover/tv", language=tmdb.LINGUA, with_networks=RETI[s["nome"]], without_genres=SENZA_GENERI,
+                        sort_by="popularity.desc", **{"first_air_date.gte": oggi.isoformat(), "first_air_date.lte": fino}) or {}
+            for x in r.get("results", [])[:TENUTI_ARRIVO]:
+                if x.get("first_air_date"):
+                    righe.setdefault(f"tv:{x['id']}", (x, x["first_air_date"], "nuova serie", "Nuova serie"))
+        c.execute("DELETE FROM in_arrivo WHERE servizio_id=?", (s["id"],))
+        for tid, (x, data, genere, cosa) in righe.items():
+            logica.salva_base(c, "tv", x)
+            c.execute("INSERT INTO in_arrivo VALUES (?,?,?,?,?,?)", (s["id"], tid, data, genere, cosa, oggi.isoformat()))
+        conta[s["nome"]] = len(righe)
+    return conta
+
+
 def conf_ntfy():
     try:
         return json.loads((tmdb.CONF / "ntfy.json").read_text())
@@ -206,6 +259,13 @@ def main():
         except tmdb.ErroreTMDB as e:
             c.rollback(); errori += 1
             log(f"catalogo: {e}")
+
+    try:
+        conta = aggiorna_in_arrivo(c, api, oggi); c.commit()
+        log("in arrivo: " + ", ".join(f"{k} {v}" for k, v in conta.items()))
+    except tmdb.ErroreTMDB as e:
+        c.rollback()
+        log(f"in arrivo: {e} (restano quelli di ieri)")
 
     try:
         n = logica.calcola_consigliati(c, api, oggi); c.commit()

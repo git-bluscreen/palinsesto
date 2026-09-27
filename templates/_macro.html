@@ -43,6 +43,15 @@
 </div>
 {% endmacro %}
 
+{% macro riga_arrivo(x) %}
+<li><a href="{{ link(x.r.titolo_id) }}">
+  {% if x.r.poster %}<img src="{{ img(x.r.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% else %}<span class="segnaposto-riga"></span>{% endif %}
+  <span><b>{{ x.r.titolo }}</b>
+    <small><span class="genere-{{ x.r.genere|replace(' ', '-') }}">{{ x.r.cosa }}</span> · {{ x.r.data|gm }} ({{ x.r.data|fra }}){% if x.r.mio %} · <b class="tuo">nei tuoi</b>{% endif %}</small>
+    <span class="servizi-mini">{% for sid, nome in x.dove.items() %}<span class="chip">{{ nome }}</span>{% endfor %}</span></span>
+</a></li>
+{% endmacro %}
+
 {% macro logo_servizio(s, misura='w92') %}
 {% if s.logo %}<img class="logo-servizio" src="{{ img(s.logo, misura) }}" alt="" width="40" height="40">{% else %}<span class="logo-servizio segnaposto">{{ s.nome[:1] }}</span>{% endif %}
 {% endmacro %}

@@ -30,9 +30,16 @@
   {{ mm.griglia(da_vedere, 'Niente dei tuoi titoli da vedere su ' ~ s.nome ~ ' adesso.') }}
 </section>
 
+{% if arrivi %}
+<section>
+  <h2 class="sezione-titolo">In arrivo su {{ s.nome }} · {{ n_arrivi }} {% if n_arrivi > arrivi|length %}<a class="tutti" href="{{ url_for('in_arrivo', servizio=s.id) }}">tutto</a>{% endif %}</h2>
+  <ul class="elenco-righe">{% for y in arrivi %}{{ mm.riga_arrivo(y) }}{% endfor %}</ul>
+</section>
+{% endif %}
+
 {% if x and x.attese %}
 <section>
-  <h2 class="sezione-titolo">In arrivo</h2>
+  <h2 class="sezione-titolo">In arrivo dai tuoi titoli</h2>
   <ul class="elenco-righe">
   {% for quando, y in x.attese %}
     <li><a href="{{ link(y.t.id) }}">

@@ -17,3 +17,9 @@ window.addEventListener("DOMContentLoaded", () => {
   try { v = JSON.parse(sessionStorage.getItem("pal-scroll")); sessionStorage.removeItem("pal-scroll"); } catch (_) {}
   if (v && v[0] === location.pathname && !location.hash) window.scrollTo(0, v[1]);
 });
+// dopo una spunta si torna su #sN: quella stagione resta aperta
+window.addEventListener("DOMContentLoaded", () => {
+  const li = location.hash && document.getElementById(location.hash.slice(1));
+  const d = li && li.querySelector("details");
+  if (d) d.open = true;
+});
