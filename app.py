@@ -369,7 +369,7 @@ def scheda(tipo, tmdb_id):
     liste = c().execute("""SELECT l.*, EXISTS(SELECT 1 FROM lista_titoli x WHERE x.lista_id=l.id AND x.titolo_id=?) AS dentro
                            FROM liste l ORDER BY ordine, nome""", (tid,)).fetchall()
     eventi = c().execute("SELECT * FROM eventi WHERE titolo_id=? ORDER BY quando DESC, id DESC LIMIT 10", (tid,)).fetchall()
-    return render_template("scheda.html", t=t, m=m, viste=db.viste(m), stagioni=stagioni, liste=liste,
+    return render_template("scheda.html", t=t, m=m, viste=db.viste_tutte(c(), tid, m), stagioni=stagioni, liste=liste,
                            disp=disponibilita(tid), eventi=eventi, abbonato=abbonato, o=oggi().isoformat())
 
 
@@ -388,15 +388,16 @@ def scheda_azione(tipo, tmdb_id):
     elif az == "stagione":
         n = request.form.get("n", type=int)
         m = mio(tid, crea=True)
-        v = db.viste(m)
+        # la data «viste fino al» diventa spunte esplicite, poi si cambia la
+        # sola stagione toccata: togliere la spunta alla 2 non deve togliere la 1
+        v = db.viste_tutte(c(), tid, m)
         v ^= {n}
-        c().execute("UPDATE miei SET stagioni_viste=? WHERE titolo_id=?", (",".join(map(str, sorted(v))), tid))
+        c().execute("UPDATE miei SET stagioni_viste=?, viste_fino=NULL WHERE titolo_id=?",
+                    (",".join(map(str, sorted(v))), tid))
         ancora = "#stagioni"
     elif az == "tutte_viste":
-        m = mio(tid, crea=True)
-        n = [r[0] for r in c().execute("SELECT numero FROM stagioni WHERE titolo_id=? AND uscita<=?",
-                                       (tid, oggi().isoformat()))]
-        c().execute("UPDATE miei SET stagioni_viste=? WHERE titolo_id=?", (",".join(map(str, n)), tid))
+        mio(tid, crea=True)
+        c().execute("UPDATE miei SET viste_fino=? WHERE titolo_id=?", (oggi().isoformat(), tid))
         ancora = "#stagioni"
     elif az == "lista":
         lid = request.form.get("lista", type=int)
@@ -609,7 +610,10 @@ def importa():
             mio(v, crea=True)
             c().execute("INSERT OR IGNORE INTO lista_titoli VALUES (?,?,?)", (lid, v, oggi().isoformat()))
             if request.form.get("visti") == "1":
-                c().execute("UPDATE miei SET visto=1 WHERE titolo_id=?", (v,))
+                # film: visto; serie: viste le stagioni uscite finora, le prossime restano da vedere
+                campo = "visto=1" if tipo == "movie" else "viste_fino=?"
+                c().execute(f"UPDATE miei SET {campo} WHERE titolo_id=?",
+                            (v,) if tipo == "movie" else (oggi().isoformat(), v))
             n += 1
         c().commit()
         log(f"importati {n} titoli nella lista {lid}")

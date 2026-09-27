@@ -8,7 +8,7 @@
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <textarea name="testo" rows="12" placeholder="The Bear (2022)&#10;Dune: Parte due&#10;Severance" required></textarea>
   <label>Nella lista<select name="lista">{% for l in liste %}<option value="{{ l.id }}">{{ l.nome }}</option>{% endfor %}</select></label>
-  <label class="spunta-filtro"><input type="checkbox" name="visti" value="1"> Sono titoli già visti</label>
+  <label class="spunta-filtro"><input type="checkbox" name="visti" value="1"> Li ho già visti (per le serie: tutte le stagioni uscite finora; le prossime restano da vedere)</label>
   <button class="primario">Cerca gli abbinamenti</button>
 </form>
 {% else %}

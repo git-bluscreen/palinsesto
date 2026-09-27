@@ -11,7 +11,7 @@ con 5 stagioni darebbe 5 «stagione uscita» in un colpo.
 """
 import calendar, datetime as dt
 
-from db import ASSENZE_PER_CHIUDERE, viste
+from db import ASSENZE_PER_CHIUDERE, viste, vista
 
 ABBONAMENTO = ("flatrate", "free", "ads")      # offerte che un abbonamento copre
 OFFERTE = {"flatrate": "abbonamento", "free": "gratis", "ads": "con pubblicità",
@@ -181,10 +181,10 @@ def da_vedere(c, oggi):
     """Per ogni titolo mio: cosa c'e' da vedere e cosa sta arrivando.
     Ritorna {titolo_id: dict(pronte=[n..], in_corso=[(n, fine)], in_arrivo=[(n, uscita)])}."""
     out = {}
-    for t in c.execute("SELECT t.*, m.visto, m.stagioni_viste FROM miei m JOIN titoli t ON t.id=m.titolo_id"):
-        if t["visto"]:
-            continue
+    for t in c.execute("SELECT t.*, m.visto, m.stagioni_viste, m.viste_fino FROM miei m JOIN titoli t ON t.id=m.titolo_id"):
         if t["tipo"] == "movie":
+            if t["visto"]:
+                continue
             out[t["id"]] = dict(t=t, pronte=[0], in_corso=[], in_arrivo=[])
             continue
         v = viste(t)
@@ -192,7 +192,7 @@ def da_vedere(c, oggi):
         sigla_n = int(t["prossimo_ep_sigla"][1:3]) if t["prossimo_ep_sigla"] else None
         for s in c.execute("SELECT * FROM stagioni WHERE titolo_id=? ORDER BY numero", (t["id"],)):
             n, u, f = s["numero"], data(s["uscita"]), data(s["fine"])
-            if n in v:
+            if vista(n, s["uscita"], v, t["viste_fino"]):
                 continue
             if u and u <= oggi:
                 if (f and f > oggi) or (not f and sigla_n == n):

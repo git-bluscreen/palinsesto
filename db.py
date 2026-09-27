@@ -86,8 +86,9 @@ CREATE TABLE IF NOT EXISTS disponibilita (
 CREATE TABLE IF NOT EXISTS miei (
   titolo_id TEXT PRIMARY KEY REFERENCES titoli(id) ON DELETE CASCADE,
   mi_piace INTEGER DEFAULT 0,
-  visto INTEGER DEFAULT 0,         -- film: visto; serie: vista tutta (anche le stagioni future no)
-  stagioni_viste TEXT DEFAULT '',  -- '1,2,3'
+  visto INTEGER DEFAULT 0,         -- solo film. Una serie non e' mai «vista per sempre»: escono stagioni nuove
+  stagioni_viste TEXT DEFAULT '',  -- '1,2,3': spunte una per una
+  viste_fino TEXT,                 -- serie: viste tutte le stagioni uscite fino a questa data (import, «segna uscite»)
   avvisi INTEGER DEFAULT 1,
   aggiunto TEXT
 );
@@ -141,10 +142,22 @@ def apri(file=None):
     c.execute("PRAGMA foreign_keys = ON")
     c.execute("PRAGMA journal_mode = WAL")     # la pagina legge mentre il job notturno scrive
     c.executescript(SCHEMA)
+    migra(c)
     if not c.execute("SELECT 1 FROM liste").fetchone():
         c.execute("INSERT INTO liste (nome, ordine) VALUES ('Da vedere', 1)")
         c.commit()
     return c
+
+
+def migra(c):
+    colonne = {r[1] for r in c.execute("PRAGMA table_info(miei)")}
+    if "viste_fino" not in colonne:
+        # fino al 27/09 l'import segnava le serie «viste» con visto=1, che le
+        # escludeva per sempre anche dalle stagioni future: diventano «viste
+        # fino a oggi», il significato che l'utente intendeva
+        c.execute("ALTER TABLE miei ADD COLUMN viste_fino TEXT")
+        c.execute("UPDATE miei SET viste_fino=date('now','localtime'), visto=0 WHERE visto=1 AND titolo_id LIKE 'tv:%'")
+        c.commit()
 
 
 def meta(c, chiave, valore=None):
@@ -156,6 +169,19 @@ def meta(c, chiave, valore=None):
 
 
 def viste(riga):
-    """Insieme delle stagioni viste da una riga di `miei`."""
+    """Stagioni spuntate una per una in una riga di `miei`."""
     s = (riga["stagioni_viste"] if riga else "") or ""
     return {int(x) for x in s.split(",") if x.strip().isdigit()}
+
+
+def vista(numero, uscita, spuntate, viste_fino):
+    """Una stagione e' vista se spuntata, o se uscita entro «viste fino al»."""
+    return numero in spuntate or bool(viste_fino and uscita and uscita <= viste_fino)
+
+
+def viste_tutte(c, titolo_id, riga):
+    """Tutte le stagioni viste di un titolo, spunte piu' «viste fino al»."""
+    v = viste(riga)
+    vf = riga["viste_fino"] if riga else None
+    return {s["numero"] for s in c.execute("SELECT numero, uscita FROM stagioni WHERE titolo_id=?", (titolo_id,))
+            if vista(s["numero"], s["uscita"], v, vf)}

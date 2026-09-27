@@ -29,6 +29,13 @@ csrf = re.search(r'name="csrf" value="([^"]+)"', s.get(B + "/t/tv/1").text).grou
 r = s.post(B + "/t/tv/1", data=dict(azione="mi_piace")); ok("POST senza CSRF -> 400", r.status_code == 400)
 r = s.post(B + "/t/tv/1", data=dict(azione="mi_piace", csrf=csrf)); ok("mi piace", r.status_code == 200 and "♥ Mi piace" in r.text)
 r = s.post(B + "/t/tv/1", data=dict(azione="stagione", n=3, csrf=csrf)); ok("stagione 3 vista", r.status_code == 200 and r.text.count('aria-pressed="true" title="Vista"') >= 1)
+for n in (1, 2, 3):   # nessuna spunta: la prova parte pulita
+    r = s.post(B + "/t/tv/1", data=dict(azione="stagione", n=n, csrf=csrf))
+ok("nessuna stagione vista", r.text.count('title="Vista"') == 0, r.text.count('title="Vista"'))
+r = s.post(B + "/t/tv/1", data=dict(azione="tutte_viste", csrf=csrf))
+ok("segna uscite come viste", r.text.count('title="Vista"') == 2, r.text.count('title="Vista"'))
+r = s.post(B + "/t/tv/1", data=dict(azione="stagione", n=1, csrf=csrf))
+ok("togli la 1: la 2 resta vista", r.text.count('title="Vista"') == 1, r.text.count('title="Vista"'))
 r = s.post(B + "/t/tv/1", data=dict(azione="avvisi", csrf=csrf)); ok("avvisi spenti", "Avvisi spenti" in r.text)
 r = s.post(B + "/t/tv/1", data=dict(azione="avvisi", csrf=csrf)); ok("avvisi riaccesi", "Avvisi attivi" in r.text)
 r = s.post(B + "/t/tv/1", data=dict(azione="boh", csrf=csrf)); ok("azione sconosciuta -> 400", r.status_code == 400)
