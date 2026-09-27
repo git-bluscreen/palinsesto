@@ -28,4 +28,5 @@
 {% if s.logo %}<img class="logo-servizio" src="{{ img(s.logo, misura) }}" alt="" width="40" height="40">{% else %}<span class="logo-servizio segnaposto">{{ s.nome[:1] }}</span>{% endif %}
 {% endmacro %}
 
-{% set ETICHETTE = {'attiva': 'Attiva', 'sfrutta': 'Da guardare', 'aspetta': 'Aspetta', 'disdici': 'Puoi disdire', 'niente': 'Niente di nuovo'} %}
+{# verdetti: sono CONSIGLI, non stati. «Attiva» era letto come «è attivo» #}
+{% set ETICHETTE = {'attiva': 'Conviene abbonarsi', 'sfrutta': 'Hai da guardare', 'aspetta': 'Aspetta', 'disdici': 'Puoi disdire', 'niente': 'Niente di nuovo'} %}
