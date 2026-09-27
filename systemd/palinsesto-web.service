@@ -1,0 +1,18 @@
+[Unit]
+Description=Palinsesto: pagina web (film, serie, abbonamenti) su :45090
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=claude
+WorkingDirectory=/home/claude/palinsesto
+ExecStart=/usr/bin/python3 /home/claude/palinsesto/app.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/claude/.local/share/palinsesto /home/claude/.config/palinsesto
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}Novità · Palinsesto{% endblock %}
+{% block corpo %}
+<h1 class="pagina-titolo">Novità</h1>
+
+<section>
+  <h2 class="sezione-titolo">Dai tuoi titoli e abbonamenti · ultimi {{ giorni }} giorni</h2>
+  {% if mie %}
+  <ul class="elenco-righe">
+  {% for e in mie %}
+    <li>{% if e.titolo_id %}<a href="{{ link(e.titolo_id) }}">{% else %}<a href="{{ url_for('abbonamenti') }}">{% endif %}
+      {% if e.poster %}<img src="{{ img(e.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% else %}<span class="segnaposto-riga"></span>{% endif %}
+      <span>{{ e.testo }}<small>{{ e.quando|gm }}{% if not e.notificare %} · senza avviso{% endif %}</small></span>
+    </a></li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="vuoto">Niente negli ultimi {{ giorni }} giorni.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h2 class="sezione-titolo">Nuovi nei cataloghi</h2>
+  <nav class="schede-servizi" aria-label="Servizio">
+    <a href="{{ url_for('novita') }}" {% if not servizio %}aria-current="page"{% endif %}>Tutti</a>
+    {% for s in servizi %}<a href="{{ url_for('novita', servizio=s.id) }}" {% if servizio == s.id %}aria-current="page"{% endif %}>{{ s.nome }}</a>{% endfor %}
+  </nav>
+  <p class="nota">Titoli usciti negli ultimi 18 mesi comparsi per la prima volta fra i più visti di un servizio. TMDB non dice il giorno in cui un titolo entra in catalogo: la data è la notte in cui Palinsesto l'ha visto, e un titolo presente da tempo che diventa popolare all'improvviso può sembrare nuovo.
+  {% if servizio and base.get(servizio) %}Controllo attivo dal {{ base[servizio]|gm }}.{% endif %}</p>
+  {{ mm.griglia(catalogo, 'Nessuna novità ancora: il primo giro fa solo da base, le novità compaiono dalla notte successiva.') }}
+</section>
+{% endblock %}

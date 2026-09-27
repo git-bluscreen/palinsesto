@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block titolo %}Importa · Palinsesto{% endblock %}
+{% block corpo %}
+<h1 class="pagina-titolo">Importa un elenco</h1>
+{% if proposte is none %}
+<p class="nota">Incolla un titolo per riga, anche copiato dalla lista di JustWatch. Se c'è l'anno (<code>Dark 2017</code> o <code>Dark (2017)</code>) l'abbinamento è più preciso. Al passo successivo confermi riga per riga. Massimo 150 righe per volta.</p>
+<form method="post" class="form-importa">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <textarea name="testo" rows="12" placeholder="The Bear (2022)&#10;Dune: Parte due&#10;Severance" required></textarea>
+  <label>Nella lista<select name="lista">{% for l in liste %}<option value="{{ l.id }}">{{ l.nome }}</option>{% endfor %}</select></label>
+  <label class="spunta-filtro"><input type="checkbox" name="visti" value="1"> Sono titoli già visti</label>
+  <button class="primario">Cerca gli abbinamenti</button>
+</form>
+{% else %}
+<form method="post" class="form-importa">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="conferma">
+  <input type="hidden" name="lista" value="{{ lista }}">{% if visti %}<input type="hidden" name="visti" value="1">{% endif %}
+  {% for p in proposte %}
+  <fieldset class="proposta">
+    <legend>{{ p.riga }}</legend>
+    {% for t in p.cand %}
+    <label class="candidato">
+      <input type="checkbox" name="scelta" value="{{ t.id }}" {% if loop.first %}checked{% endif %}>
+      {% if t.poster %}<img src="{{ img(t.poster, 'w92') }}" alt="" width="40" height="60" loading="lazy">{% endif %}
+      <span><b>{{ t.titolo }}</b><small>{{ 'Serie' if t.tipo == 'tv' else 'Film' }}{% if t.anno %} · {{ t.anno }}{% endif %}</small></span>
+    </label>
+    {% else %}
+    <p class="vuoto">Nessun abbinamento trovato.</p>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+  <p class="nota">Di ogni riga è spuntato il primo abbinamento: togli la spunta a quelli sbagliati, o spuntane un altro.</p>
+  <button class="primario">Aggiungi i titoli spuntati</button>
+</form>
+{% endif %}
+{% endblock %}

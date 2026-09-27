@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block titolo %}Accesso · Palinsesto{% endblock %}
+{% block tutto %}
+<main class="accesso">
+  <form class="scheda-accesso" method="post" action="{{ url_for('accesso') }}" autocomplete="on">
+    <div class="stemma"><img src="{{ url_for('static', filename='marchio/logo-scritta.jpg') }}" alt="" width="1000" height="345"></div>
+    <p class="sottotitolo">Palinsesto</p>
+    {% if senza_utente %}
+      <p class="avviso">Nessun utente configurato. Sul container, come l'utente del servizio:<br>
+      <code>python3 ~/palinsesto/utente.py</code></p>
+    {% else %}
+      {% if errore %}<p class="errore" role="alert">{{ errore }}</p>{% endif %}
+      <input type="hidden" name="dopo" value="{{ dopo }}">
+      <label>Utente<input name="nome" autocomplete="username" required autofocus></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <label>Codice 2FA<input name="codice" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" placeholder="123 456" required></label>
+      <button class="primario" type="submit">Entra</button>
+    {% endif %}
+  </form>
+</main>
+{% endblock %}

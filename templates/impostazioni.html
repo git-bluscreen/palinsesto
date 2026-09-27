@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}Impostazioni · Palinsesto{% endblock %}
+{% block corpo %}
+<h1 class="pagina-titolo">Impostazioni</h1>
+
+<section>
+  <h2 class="sezione-titolo">Servizi seguiti</h2>
+  <p class="nota">Un servizio seguito compare in «Conviene?», nelle novità e negli avvisi di arrivo e partenza.</p>
+  <ul class="elenco-liste">
+  {% for s in servizi %}
+    <li class="riga-servizio">
+      {{ mm.logo_servizio(s) }}<b>{{ s.nome }}</b>
+      <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="seguito"><input type="hidden" name="servizio" value="{{ s.id }}">
+        <button class="interruttore{{ ' acceso' if s.seguito }}" aria-pressed="{{ 'true' if s.seguito else 'false' }}">{{ 'Seguito' if s.seguito else 'Non seguito' }}</button></form>
+    </li>
+  {% else %}
+    <li class="vuoto">Nessun servizio: si creano al primo giro di <code>aggiorna.py</code>.</li>
+  {% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2 class="sezione-titolo">Provider TMDB</h2>
+  <p class="nota">TMDB distingue le varianti (con pubblicità, canali su Prime Video o Apple TV): qui decidi a quale servizio appartiene ciascuna. «n» è il numero di tuoi titoli visti su quel provider. Da un provider non assegnato puoi creare un servizio nuovo.</p>
+  <details class="riquadro">
+    <summary>{{ provider|length }} provider per l'Italia</summary>
+    <ul class="elenco-provider">
+    {% for p in provider %}
+      <li>
+        {% if p.logo %}<img src="{{ img(p.logo, 'w92') }}" alt="" width="28" height="28" loading="lazy">{% endif %}
+        <span>{{ p.nome }} <small>#{{ p.id }}{% if p.n %} · n {{ p.n }}{% endif %}</small></span>
+        <form method="post" class="riga-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="provider" value="{{ p.id }}">
+          <select name="servizio" aria-label="Servizio di {{ p.nome }}">
+            <option value="">—</option>
+            {% for s in servizi %}<option value="{{ s.id }}" {% if p.servizio_id == s.id %}selected{% endif %}>{{ s.nome }}</option>{% endfor %}
+          </select>
+          <button class="tenue" name="azione" value="mappa">Assegna</button>
+          {% if not p.servizio_id %}<button class="collegamento" name="azione" value="nuovo">crea servizio</button>{% endif %}
+        </form>
+      </li>
+    {% endfor %}
+    </ul>
+  </details>
+</section>
+{% endblock %}

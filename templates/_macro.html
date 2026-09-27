@@ -1,0 +1,31 @@
+{# Copertina con titolo, anno e loghi dei servizi seguiti dove si vede. #}
+{% macro copertina(x) %}
+{% set t = x.t %}
+<a class="copertina" href="{{ link(t.id) }}">
+  <span class="poster">
+    {% if t.poster %}<img src="{{ img(t.poster, 'w342') }}" alt="" loading="lazy" width="342" height="513">{% else %}<span class="senza-poster">{{ t.titolo }}</span>{% endif %}
+    {% if x.mio and x.mio.mi_piace %}<span class="cuore" title="Mi piace">♥</span>{% endif %}
+    {% if x.mio and x.mio.visto %}<span class="visto-badge">visto</span>{% endif %}
+  </span>
+  <span class="didascalia">
+    <b>{{ t.titolo }}</b>
+    <small>{{ 'Serie' if t.tipo == 'tv' else 'Film' }}{% if t.anno %} · {{ t.anno }}{% endif %}</small>
+    {% if x.dv and x.dv.pronte and t.tipo == 'tv' %}<small class="da-vedere">{{ x.dv.pronte|length }} stagion{{ 'e' if x.dv.pronte|length == 1 else 'i' }} da vedere</small>{% endif %}
+    {% if x.dove %}<span class="servizi-mini">{% for sid, nome in x.dove.items() %}<span class="chip">{{ nome }}</span>{% endfor %}</span>{% endif %}
+  </span>
+</a>
+{% endmacro %}
+
+{% macro griglia(elenco, vuoto='Niente da mostrare.') %}
+{% if elenco %}
+<div class="griglia">{% for x in elenco %}{{ copertina(x) }}{% endfor %}</div>
+{% else %}
+<p class="vuoto">{{ vuoto }}</p>
+{% endif %}
+{% endmacro %}
+
+{% macro logo_servizio(s, misura='w92') %}
+{% if s.logo %}<img class="logo-servizio" src="{{ img(s.logo, misura) }}" alt="" width="40" height="40">{% else %}<span class="logo-servizio segnaposto">{{ s.nome[:1] }}</span>{% endif %}
+{% endmacro %}
+
+{% set ETICHETTE = {'attiva': 'Attiva', 'sfrutta': 'Da guardare', 'aspetta': 'Aspetta', 'disdici': 'Puoi disdire', 'niente': 'Niente di nuovo'} %}

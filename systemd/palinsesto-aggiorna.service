@@ -1,0 +1,14 @@
+[Unit]
+Description=Palinsesto: giro notturno (schede, disponibilita', novita', avvisi)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=claude
+ExecStart=/usr/bin/python3 /home/claude/palinsesto/aggiorna.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/claude/.local/share/palinsesto /home/claude/.config/palinsesto
+TimeoutStartSec=30min

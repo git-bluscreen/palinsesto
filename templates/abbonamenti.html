@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}Abbonamenti · Palinsesto{% endblock %}
+{% block corpo %}
+<h1 class="pagina-titolo">Abbonamenti</h1>
+<p class="riepilogo">Spesa attuale: <b>{{ mensile|euro }}</b> al mese{% if mensile %} ({{ (mensile * 12)|euro }} all'anno){% endif %}.</p>
+
+{% for s in servizi %}
+{% set x = consigli.get(s.id) %}
+<details class="abbonamento riquadro" id="s{{ s.id }}" {% if loop.first or (x and x.verdetto in ('attiva', 'disdici')) or (x and x.rischio_vicino) %}open{% endif %}>
+  <summary>
+    {{ mm.logo_servizio(s) }}
+    <span class="abb-testa">
+      <b>{{ s.nome }}</b>
+      <small>
+        {% if s.stato == 'attivo' %}Attivo{% if s.rinnovo %} · rinnovo {{ s.rinnovo|gm }} ({{ s.rinnovo|fra }}){% endif %}
+        {% elif s.stato == 'disdetto' %}Disdetto{% if s.fine %} · {{ 'finisce' if s.fine >= o.isoformat() else 'finito' }} il {{ s.fine|gm }}{% endif %}
+        {% else %}Non abbonato{% endif %}
+        {% if s.prezzo %} · {{ s.prezzo|euro }}/{{ s.ciclo }}{% endif %}
+        {% if not s.seguito %} · non seguito{% endif %}
+      </small>
+    </span>
+    {% if x %}<span class="etichetta v-{{ x.verdetto }}">{{ mm.ETICHETTE[x.verdetto] }}</span>{% endif %}
+  </summary>
+
+  {% if x %}
+  <div class="verdetto">
+    <p>{{ x.testo }}</p>
+    {% if x.pronti %}<ul class="piccola-lista">{% for y in x.pronti %}<li><a href="{{ link(y.t.id) }}">{{ y.t.titolo }}</a>{% if y.t.tipo == 'tv' %} — stagion{{ 'e' if y.pronte|length == 1 else 'i' }} {{ y.pronte|join(', ') }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+    {% if x.attese %}<p class="nota">In arrivo: {% for quando, y in x.attese[:5] %}<a href="{{ link(y.t.id) }}">{{ y.t.titolo }}</a> ({{ quando|gm }}){{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+    {% if x.rischio %}<p class="{{ 'allarme' if x.rischio_vicino else 'nota' }}">Cronologia e preferiti a rischio dal {{ x.rischio|gm }} ({{ s.conserva_mesi }} mesi dopo la fine).</p>
+    {% elif s.stato == 'disdetto' and not s.conserva_mesi %}<p class="nota">Per quanto tempo {{ s.nome }} conserva la cronologia dopo la disdetta? <b>Da verificare</b> nelle condizioni del servizio: inseriscilo sotto e Palinsesto ti avviserà un mese prima.</p>{% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('abbonamento_salva', sid=s.id) }}" class="form-abbonamento">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <fieldset class="scelta-stato">
+      <legend>Stato</legend>
+      {% for v, n in [('attivo', 'Attivo, si rinnova'), ('disdetto', 'Disdetto'), ('mai', 'Non abbonato')] %}
+      <label><input type="radio" name="stato" value="{{ v }}" {% if s.stato == v %}checked{% endif %}> {{ n }}</label>
+      {% endfor %}
+    </fieldset>
+    <label>Prezzo (€)<input name="prezzo" inputmode="decimal" value="{{ ('%.2f'|format(s.prezzo)).replace('.', ',') if s.prezzo }}" placeholder="es. 9,99"></label>
+    <label>Ciclo<select name="ciclo"><option value="mese" {% if s.ciclo == 'mese' %}selected{% endif %}>Mensile</option><option value="anno" {% if s.ciclo == 'anno' %}selected{% endif %}>Annuale</option></select></label>
+    <label>Prossimo rinnovo<input type="date" name="rinnovo" value="{{ s.rinnovo or '' }}"></label>
+    <label>Fine (se disdetto)<input type="date" name="fine" value="{{ s.fine or '' }}"></label>
+    <label>Tramite<input name="canale" value="{{ s.canale or '' }}" placeholder="diretto, Prime Video Channels, TIM…" maxlength="60"></label>
+    <label>Cronologia conservata (mesi)<input name="conserva_mesi" type="number" min="1" max="119" value="{{ s.conserva_mesi or '' }}" placeholder="da verificare"></label>
+    <label class="largo">Note<input name="note" value="{{ s.note or '' }}" maxlength="300"></label>
+    <button class="primario">Salva</button>
+  </form>
+</details>
+{% endfor %}
+<p class="nota">Un abbonamento attivo si rinnova da solo: passata la data, Palinsesto sposta il rinnovo al mese (o all'anno) successivo. Gli avvisi arrivano {{ 3 }} giorni prima di un rinnovo o della fine, e un mese prima che la cronologia sia a rischio.</p>
+{% endblock %}

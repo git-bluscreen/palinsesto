@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}{{ t.titolo }} · Palinsesto{% endblock %}
+{% macro bottone(azione, acceso, testo_on, testo_off, extra='') %}
+<form method="post" class="in-riga">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="{{ azione }}">{{ extra }}
+  <button class="interruttore{{ ' acceso' if acceso }}" aria-pressed="{{ 'true' if acceso else 'false' }}">{{ testo_on if acceso else testo_off }}</button>
+</form>
+{% endmacro %}
+{% block corpo %}
+<article class="scheda">
+  <div class="scheda-testa">
+    <div class="scheda-poster">{% if t.poster %}<img src="{{ img(t.poster, 'w500') }}" alt="" width="500" height="750">{% else %}<span class="senza-poster">{{ t.titolo }}</span>{% endif %}</div>
+    <div class="scheda-info">
+      <h1>{{ t.titolo }}</h1>
+      <p class="sottotitolo-scheda">
+        {{ 'Serie' if t.tipo == 'tv' else 'Film' }}{% if t.anno %} · {{ t.anno }}{% endif %}
+        {% if t.durata %} · {{ t.durata }} min{% endif %}
+        {% if t.originale and t.originale != t.titolo %} · <i>{{ t.originale }}</i>{% endif %}
+      </p>
+      {% if t.generi %}<p class="generi">{{ t.generi }}</p>{% endif %}
+      {% if t.tipo == 'tv' and t.stato %}
+        <p class="stato-serie">{{ {'Returning Series': 'In corso', 'Ended': 'Conclusa', 'Canceled': 'Cancellata', 'In Production': 'In produzione', 'Planned': 'Annunciata'}.get(t.stato, t.stato) }}
+        {% if t.prossimo_ep %} · prossimo episodio {{ t.prossimo_ep_sigla }} il {{ t.prossimo_ep|gm }} ({{ t.prossimo_ep|fra }}){% endif %}</p>
+      {% endif %}
+      <div class="azioni">
+        {{ bottone('mi_piace', m and m.mi_piace, '♥ Mi piace', '♡ Mi piace') }}
+        {% if t.tipo == 'movie' %}{{ bottone('visto', m and m.visto, '✓ Visto', 'Segna visto') }}{% endif %}
+        {{ bottone('avvisi', m and m.avvisi, '✓ Avvisi attivi', 'Avvisi spenti') }}
+      </div>
+      {% if not m %}<p class="nota">Non è ancora fra i tuoi titoli: aggiungilo a una lista per ricevere gli avvisi.</p>{% endif %}
+    </div>
+  </div>
+
+  {% if t.trama %}<p class="trama">{{ t.trama }}</p>{% endif %}
+
+  <section>
+    <h2 class="sezione-titolo">Dove lo trovi</h2>
+    {% if disp %}
+    <ul class="dove">
+    {% for d in disp %}
+      <li class="{{ 'seguito' if d.seguito else 'altro' }}">
+        {% if d.plogo %}<img src="{{ img(d.plogo, 'w92') }}" alt="" width="36" height="36">{% endif %}
+        <span><b>{{ d.servizio or d.provider }}</b>
+          {% if d.servizio and d.provider != d.servizio %}<small>{{ d.provider }}</small>{% endif %}
+          <small>{{ offerte[d.offerta] }} · dal {{ d.dal|gm }}</small></span>
+        {% if d.sid and d.offerta in ('flatrate', 'free', 'ads') %}
+          {% if abbonato(d) %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta non-abbonato">non abbonato</span>{% endif %}
+        {% endif %}
+      </li>
+    {% endfor %}
+    </ul>
+    {% else %}
+    <p class="vuoto">In Italia non risulta su nessun servizio di streaming, né a noleggio.</p>
+    {% endif %}
+  </section>
+
+  {% if t.tipo == 'tv' and stagioni %}
+  <section id="stagioni">
+    <h2 class="sezione-titolo">Stagioni
+      <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="tutte_viste"><button class="collegamento">segna uscite come viste</button></form>
+    </h2>
+    <ul class="stagioni">
+    {% for s in stagioni %}
+      {% set vista = s.numero in viste %}
+      <li class="{{ 'vista' if vista }}{{ ' futura' if not s.uscita or s.uscita > o }}">
+        <form method="post" class="in-riga">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="stagione"><input type="hidden" name="n" value="{{ s.numero }}">
+          <button class="spunta" aria-pressed="{{ 'true' if vista else 'false' }}" title="{{ 'Vista' if vista else 'Segna come vista' }}">{{ '✓' if vista else '' }}</button>
+        </form>
+        <span><b>{{ s.nome or ('Stagione ' ~ s.numero) }}</b>
+          <small>{% if s.episodi %}{{ s.episodi }} episodi · {% endif %}
+          {% if not s.uscita %}data non annunciata
+          {% elif s.uscita > o %}esce il {{ s.uscita|gm }} ({{ s.uscita|fra }})
+          {% elif s.fine and s.fine > o %}in corso, finisce il {{ s.fine|gm }}
+          {% else %}uscita il {{ s.uscita|gm }}{% if s.fine and s.fine != s.uscita %}, completa dal {{ s.fine|gm }}{% endif %}{% endif %}</small></span>
+      </li>
+    {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section id="liste">
+    <h2 class="sezione-titolo">Liste</h2>
+    <div class="liste-chip">
+    {% for l in liste %}
+      <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="lista"><input type="hidden" name="lista" value="{{ l.id }}">
+        <button class="interruttore{{ ' acceso' if l.dentro }}" aria-pressed="{{ 'true' if l.dentro else 'false' }}">{{ '✓ ' if l.dentro else '+ ' }}{{ l.nome }}</button></form>
+    {% endfor %}
+    </div>
+  </section>
+
+  {% if eventi %}
+  <section>
+    <h2 class="sezione-titolo">Storia</h2>
+    <ul class="storia">{% for e in eventi %}<li><small>{{ e.quando|gm }}</small> {{ e.testo }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+
+  <p class="piede-scheda">
+    Aggiornata {{ t.aggiornato[:16].replace('T', ' ') if t.aggiornato else 'mai' }} ·
+    <a href="?aggiorna=1">aggiorna ora</a> ·
+    <a href="https://www.themoviedb.org/{{ t.tipo }}/{{ t.tmdb_id }}" rel="noreferrer">su TMDB</a>
+    {% if m %} ·
+    <form method="post" class="in-riga conferma" data-conferma="Togliere «{{ t.titolo }}» dai tuoi titoli e da tutte le liste?"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="rimuovi"><button class="collegamento pericolo">togli dai miei titoli</button></form>
+    {% endif %}
+  </p>
+</article>
+{% endblock %}
