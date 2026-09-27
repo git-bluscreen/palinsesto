@@ -10,7 +10,7 @@
   <span class="didascalia">
     <b>{{ t.titolo }}</b>
     <small>{{ 'Serie' if t.tipo == 'tv' else 'Film' }}{% if t.anno %} · {{ t.anno }}{% endif %}</small>
-    {% if x.dv and x.dv.pronte and t.tipo == 'tv' %}<small class="da-vedere">{{ x.dv.pronte|length }} stagion{{ 'e' if x.dv.pronte|length == 1 else 'i' }} da vedere</small>{% endif %}
+    {% if x.dv and x.dv.pronte and t.tipo == 'tv' %}<small class="da-vedere">{% if x.dv.episodi %}{{ x.dv.episodi }} episod{{ 'io' if x.dv.episodi == 1 else 'i' }}{% else %}{{ x.dv.pronte|length }} stagion{{ 'e' if x.dv.pronte|length == 1 else 'i' }}{% endif %} da vedere</small>{% endif %}
     {% if x.dove %}<span class="servizi-mini">{% for sid, nome in x.dove.items() %}<span class="chip">{{ nome }}</span>{% endfor %}</span>{% endif %}
   </span>
 </a>

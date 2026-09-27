@@ -11,7 +11,7 @@ con 5 stagioni darebbe 5 «stagione uscita» in un colpo.
 """
 import calendar, datetime as dt
 
-from db import ASSENZE_PER_CHIUDERE, viste, vista
+from db import ASSENZE_PER_CHIUDERE, riepilogo, viste, vista
 
 ABBONAMENTO = ("flatrate", "free", "ads")      # offerte che un abbonamento copre
 OFFERTE = {"flatrate": "abbonamento", "free": "gratis", "ads": "con pubblicità",
@@ -72,6 +72,16 @@ def salva_base(c, tipo, x):
               (tid, tipo, x["id"], titolo_di(x), originale_di(x), anno_di(x),
                x.get("poster_path"), x.get("backdrop_path"), x.get("overview")))
     return tid
+
+
+def salva_episodi(c, tid, stagione, episodi):
+    for e in episodi:
+        if e.get("episode_number") is None:
+            continue
+        c.execute("""INSERT INTO episodi (titolo_id, stagione, numero, nome, uscita, durata) VALUES (?,?,?,?,?,?)
+                     ON CONFLICT(titolo_id, stagione, numero) DO UPDATE SET
+                     nome=excluded.nome, uscita=excluded.uscita, durata=excluded.durata""",
+                  (tid, stagione, e["episode_number"], e.get("name"), e.get("air_date"), e.get("runtime")))
 
 
 def salva_scheda(c, api, tipo, tmdb_id, oggi, con_stagioni=True):
@@ -150,9 +160,12 @@ def salva_scheda(c, api, tipo, tmdb_id, oggi, con_stagioni=True):
             # la fine di una stagione (ultimo episodio) chiede una chiamata in piu':
             # solo per quelle in corso o in arrivo, e finche' non e' nota
             corrente = not uscita or data(uscita) >= oggi - dt.timedelta(days=150)
-            if con_stagioni and corrente and (not fine or data(fine) >= oggi):
+            senza_ep = not c.execute("SELECT 1 FROM episodi WHERE titolo_id=? AND stagione=?", (tid, n)).fetchone()
+            if con_stagioni and ((corrente and (not fine or data(fine) >= oggi)) or (senza_ep and mio)):
                 st = api.stagione(tmdb_id, n)
-                date = [e.get("air_date") for e in (st or {}).get("episodes", [])]
+                eps = (st or {}).get("episodes", [])
+                salva_episodi(c, tid, n, eps)
+                date = [e.get("air_date") for e in eps]
                 if date and all(date):
                     fine = max(date)
             c.execute("""INSERT INTO stagioni (titolo_id, numero, nome, episodi, uscita, fine, poster)
@@ -185,24 +198,32 @@ def da_vedere(c, oggi):
         if t["tipo"] == "movie":
             if t["visto"]:
                 continue
-            out[t["id"]] = dict(t=t, pronte=[0], in_corso=[], in_arrivo=[])
+            out[t["id"]] = dict(t=t, pronte=[0], in_corso=[], in_arrivo=[], episodi=0)
             continue
-        v = viste(t)
-        pronte, in_corso, in_arrivo = [], [], []
+        riep = riepilogo(c, t["id"], t, iso(oggi))
+        pronte, in_corso, in_arrivo, episodi = [], [], [], 0
         sigla_n = int(t["prossimo_ep_sigla"][1:3]) if t["prossimo_ep_sigla"] else None
         for s in c.execute("SELECT * FROM stagioni WHERE titolo_id=? ORDER BY numero", (t["id"],)):
             n, u, f = s["numero"], data(s["uscita"]), data(s["fine"])
-            if vista(n, s["uscita"], v, t["viste_fino"]):
+            r = riep.get(n) or {}
+            if r.get("vista"):
                 continue
             if u and u <= oggi:
-                if (f and f > oggi) or (not f and sigla_n == n):
+                if r.get("noti"):
+                    # tutti gli episodi usciti sono visti, ne mancano di futuri: in pari, si aspetta
+                    completa = r["usciti"] == r["totale"] or (f and f <= oggi)
+                    if completa and r["da_vedere"]:
+                        pronte.append(n); episodi += r["da_vedere"]
+                    elif not completa:
+                        in_corso.append((n, f or data(t["prossimo_ep"])))
+                elif (f and f > oggi) or (not f and sigla_n == n):
                     in_corso.append((n, f or data(t["prossimo_ep"])))
                 else:
                     pronte.append(n)
             elif u and u <= oggi + dt.timedelta(days=GIORNI_ANNUNCI):
                 in_arrivo.append((n, u))
         if pronte or in_corso or in_arrivo:
-            out[t["id"]] = dict(t=t, pronte=pronte, in_corso=in_corso, in_arrivo=in_arrivo)
+            out[t["id"]] = dict(t=t, pronte=pronte, in_corso=in_corso, in_arrivo=in_arrivo, episodi=episodi)
     return out
 
 

@@ -72,6 +72,22 @@ CREATE TABLE IF NOT EXISTS stagioni (
   PRIMARY KEY (titolo_id, numero)
 );
 
+CREATE TABLE IF NOT EXISTS episodi (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  stagione INTEGER, numero INTEGER,
+  nome TEXT, uscita TEXT, durata INTEGER,
+  PRIMARY KEY (titolo_id, stagione, numero)
+);
+
+-- episodi segnati visti uno per uno; `fonte` dice chi l'ha segnato:
+-- 'mano' dalla pagina, 'firetv:<entita>' dal rilevamento automatico...
+CREATE TABLE IF NOT EXISTS visti_ep (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  stagione INTEGER, numero INTEGER,
+  quando TEXT, fonte TEXT,
+  PRIMARY KEY (titolo_id, stagione, numero)
+);
+
 CREATE TABLE IF NOT EXISTS disponibilita (
   titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
   provider_id INTEGER,
@@ -179,9 +195,64 @@ def vista(numero, uscita, spuntate, viste_fino):
     return numero in spuntate or bool(viste_fino and uscita and uscita <= viste_fino)
 
 
-def viste_tutte(c, titolo_id, riga):
-    """Tutte le stagioni viste di un titolo, spunte piu' «viste fino al»."""
-    v = viste(riga)
+# Tre modi di dire «visto», dal piu' fine al piu' grosso: l'episodio spuntato
+# (visti_ep), la stagione spuntata intera (miei.stagioni_viste) e «tutto quello
+# uscito fino al» (miei.viste_fino, dall'import). Un episodio e' visto se lo dice
+# uno qualunque dei tre. Le due scorciatoie valgono anche per episodi che non
+# conosciamo ancora: per questo non si convertono subito in spunte.
+
+def episodi_visti(c, titolo_id, riga):
+    """{stagione: {numeri}} degli episodi visti, per qualunque delle tre vie."""
+    sv = viste(riga)
     vf = riga["viste_fino"] if riga else None
-    return {s["numero"] for s in c.execute("SELECT numero, uscita FROM stagioni WHERE titolo_id=?", (titolo_id,))
-            if vista(s["numero"], s["uscita"], v, vf)}
+    out = {}
+    for r in c.execute("SELECT stagione, numero FROM visti_ep WHERE titolo_id=?", (titolo_id,)):
+        out.setdefault(r[0], set()).add(r[1])
+    for e in c.execute("SELECT stagione, numero, uscita FROM episodi WHERE titolo_id=?", (titolo_id,)):
+        if vista(e["stagione"], e["uscita"], sv, vf):
+            out.setdefault(e["stagione"], set()).add(e["numero"])
+    return out
+
+
+def riepilogo(c, titolo_id, riga, oggi):
+    """{stagione: dict} con totale, usciti, visti, da_vedere (episodi usciti non visti),
+    noti (episodi conosciuti) e vista (niente da vedere e niente ancora da uscire).
+    Senza episodi noti vale la stagione intera."""
+    sv = viste(riga)
+    vf = riga["viste_fino"] if riga else None
+    visti = episodi_visti(c, titolo_id, riga)
+    eps = {}
+    for e in c.execute("SELECT stagione, numero, uscita FROM episodi WHERE titolo_id=? ORDER BY stagione, numero",
+                       (titolo_id,)):
+        eps.setdefault(e["stagione"], []).append(e)
+    out = {}
+    for s in c.execute("SELECT numero, uscita FROM stagioni WHERE titolo_id=?", (titolo_id,)):
+        n = s["numero"]
+        if eps.get(n):
+            tutti = [e["numero"] for e in eps[n]]
+            usciti = [e["numero"] for e in eps[n] if e["uscita"] and e["uscita"] <= oggi]
+            v = visti.get(n, set()) & set(tutti)
+            da = [x for x in usciti if x not in v]
+            out[n] = dict(noti=True, totale=len(tutti), usciti=len(usciti), visti=len(v), da_vedere=len(da),
+                          vista=bool(usciti) and not da and len(usciti) == len(tutti), numeri_visti=v)
+        else:
+            vv = vista(n, s["uscita"], sv, vf)
+            out[n] = dict(noti=False, totale=None, usciti=None, visti=None, da_vedere=None, vista=vv, numeri_visti=set())
+    return out
+
+
+def materializza(c, titolo_id, riga, oggi):
+    """Trasforma le due scorciatoie in spunte per episodio, dove gli episodi sono
+    noti, prima di togliere una spunta: togliere l'episodio 3 non deve togliere
+    tutta la stagione, ne' tutto cio' che era «visto fino al»."""
+    sv = viste(riga)
+    vf = riga["viste_fino"] if riga else None
+    noti = {r[0] for r in c.execute("SELECT DISTINCT stagione FROM episodi WHERE titolo_id=?", (titolo_id,))}
+    for n, numeri in episodi_visti(c, titolo_id, riga).items():
+        c.executemany("INSERT OR IGNORE INTO visti_ep VALUES (?,?,?,?,'mano')",
+                      [(titolo_id, n, e, oggi) for e in numeri])
+    # le stagioni di cui non conosciamo gli episodi restano intere
+    resto = {s["numero"] for s in c.execute("SELECT numero, uscita FROM stagioni WHERE titolo_id=?", (titolo_id,))
+             if s["numero"] not in noti and vista(s["numero"], s["uscita"], sv, vf)}
+    c.execute("UPDATE miei SET stagioni_viste=?, viste_fino=NULL WHERE titolo_id=?",
+              (",".join(map(str, sorted(resto))), titolo_id))

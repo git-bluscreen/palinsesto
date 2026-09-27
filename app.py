@@ -284,6 +284,23 @@ def assicura_scheda(tipo, tmdb_id, forza=False):
     return t
 
 
+def carica_episodi(tid, tmdb_id):
+    """Episodi delle stagioni che non li hanno ancora: una chiamata per stagione,
+    una volta sola. Solo per i miei titoli, dove servono per le spunte."""
+    if not api():
+        return
+    mancanti = [r[0] for r in c().execute(
+        """SELECT numero FROM stagioni s WHERE titolo_id=? AND numero>0 AND NOT EXISTS
+           (SELECT 1 FROM episodi e WHERE e.titolo_id=s.titolo_id AND e.stagione=s.numero)""", (tid,))]
+    try:
+        for n in mancanti[:40]:
+            logica.salva_episodi(c(), tid, n, (api().stagione(tmdb_id, n) or {}).get("episodes", []))
+        c().commit()
+    except tmdb.ErroreTMDB as e:
+        c().rollback()
+        log(f"episodi {tid}: {e}")
+
+
 def disponibilita(tid):
     """[(servizio o None, provider, offerta, dal)] adesso, servizi seguiti prima."""
     return c().execute("""
@@ -365,11 +382,16 @@ def scheda(tipo, tmdb_id):
         abort(404)
     tid = t["id"]
     m = mio(tid)
+    if m and tipo == "tv":
+        carica_episodi(tid, tmdb_id)
     stagioni = c().execute("SELECT * FROM stagioni WHERE titolo_id=? ORDER BY numero", (tid,)).fetchall()
+    episodi = {}
+    for e in c().execute("SELECT * FROM episodi WHERE titolo_id=? ORDER BY stagione, numero", (tid,)):
+        episodi.setdefault(e["stagione"], []).append(e)
     liste = c().execute("""SELECT l.*, EXISTS(SELECT 1 FROM lista_titoli x WHERE x.lista_id=l.id AND x.titolo_id=?) AS dentro
                            FROM liste l ORDER BY ordine, nome""", (tid,)).fetchall()
     eventi = c().execute("SELECT * FROM eventi WHERE titolo_id=? ORDER BY quando DESC, id DESC LIMIT 10", (tid,)).fetchall()
-    return render_template("scheda.html", t=t, m=m, viste=db.viste_tutte(c(), tid, m), stagioni=stagioni, liste=liste,
+    return render_template("scheda.html", t=t, m=m, riep=db.riepilogo(c(), tid, m, oggi().isoformat()), episodi=episodi, stagioni=stagioni, liste=liste,
                            disp=disponibilita(tid), eventi=eventi, abbonato=abbonato, o=oggi().isoformat())
 
 
@@ -388,13 +410,37 @@ def scheda_azione(tipo, tmdb_id):
     elif az == "stagione":
         n = request.form.get("n", type=int)
         m = mio(tid, crea=True)
-        # la data «viste fino al» diventa spunte esplicite, poi si cambia la
-        # sola stagione toccata: togliere la spunta alla 2 non deve togliere la 1
-        v = db.viste_tutte(c(), tid, m)
-        v ^= {n}
-        c().execute("UPDATE miei SET stagioni_viste=?, viste_fino=NULL WHERE titolo_id=?",
-                    (",".join(map(str, sorted(v))), tid))
-        ancora = "#stagioni"
+        r = db.riepilogo(c(), tid, m, oggi().isoformat()).get(n)
+        if r is None:
+            abort(400)
+        if r["vista"] or (r["noti"] and r["usciti"] and not r["da_vedere"]):
+            # togliere: prima le scorciatoie diventano spunte, poi via solo questa stagione
+            db.materializza(c(), tid, m, oggi().isoformat())
+            c().execute("DELETE FROM visti_ep WHERE titolo_id=? AND stagione=?", (tid, n))
+            m = mio(tid)
+            c().execute("UPDATE miei SET stagioni_viste=? WHERE titolo_id=?",
+                        (",".join(str(x) for x in sorted(db.viste(m) - {n})), tid))
+        elif r["noti"]:
+            c().executemany("INSERT OR IGNORE INTO visti_ep VALUES (?,?,?,?,'mano')",
+                            [(tid, n, e[0], oggi().isoformat()) for e in c().execute(
+                                "SELECT numero FROM episodi WHERE titolo_id=? AND stagione=? AND uscita<=?",
+                                (tid, n, oggi().isoformat()))])
+        else:
+            c().execute("UPDATE miei SET stagioni_viste=? WHERE titolo_id=?",
+                        (",".join(str(x) for x in sorted(db.viste(m) | {n})), tid))
+        ancora = f"#s{n}"
+    elif az == "episodio":
+        n, e = request.form.get("n", type=int), request.form.get("e", type=int)
+        if not c().execute("SELECT 1 FROM episodi WHERE titolo_id=? AND stagione=? AND numero=?", (tid, n, e)).fetchone():
+            abort(400)
+        m = mio(tid, crea=True)
+        gia = e in db.episodi_visti(c(), tid, m).get(n, set())
+        db.materializza(c(), tid, m, oggi().isoformat())
+        if gia:
+            c().execute("DELETE FROM visti_ep WHERE titolo_id=? AND stagione=? AND numero=?", (tid, n, e))
+        else:
+            c().execute("INSERT OR IGNORE INTO visti_ep VALUES (?,?,?,?,'mano')", (tid, n, e, oggi().isoformat()))
+        ancora = f"#s{n}"
     elif az == "tutte_viste":
         mio(tid, crea=True)
         c().execute("UPDATE miei SET viste_fino=? WHERE titolo_id=?", (oggi().isoformat(), tid))

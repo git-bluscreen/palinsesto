@@ -62,18 +62,39 @@
     </h2>
     <ul class="stagioni">
     {% for s in stagioni %}
-      {% set vista = s.numero in viste %}
-      <li class="{{ 'vista' if vista }}{{ ' futura' if not s.uscita or s.uscita > o }}">
-        <form method="post" class="in-riga">
-          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="stagione"><input type="hidden" name="n" value="{{ s.numero }}">
-          <button class="spunta" aria-pressed="{{ 'true' if vista else 'false' }}" title="{{ 'Vista' if vista else 'Segna come vista' }}">{{ '✓' if vista else '' }}</button>
-        </form>
-        <span><b>{{ s.nome or ('Stagione ' ~ s.numero) }}</b>
-          <small>{% if s.episodi %}{{ s.episodi }} episodi · {% endif %}
-          {% if not s.uscita %}data non annunciata
-          {% elif s.uscita > o %}esce il {{ s.uscita|gm }} ({{ s.uscita|fra }})
-          {% elif s.fine and s.fine > o %}in corso, finisce il {{ s.fine|gm }}
-          {% else %}uscita il {{ s.uscita|gm }}{% if s.fine and s.fine != s.uscita %}, completa dal {{ s.fine|gm }}{% endif %}{% endif %}</small></span>
+      {% set r = riep.get(s.numero, {}) %}
+      {% set eps = episodi.get(s.numero, []) %}
+      <li id="s{{ s.numero }}" class="{{ 'vista' if r.vista }}{{ ' futura' if not s.uscita or s.uscita > o }}">
+        <div class="stagione-testa">
+          <form method="post" class="in-riga">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="stagione"><input type="hidden" name="n" value="{{ s.numero }}">
+            <button class="spunta{{ ' parziale' if r.noti and r.visti and not r.vista }}" aria-pressed="{{ 'true' if r.vista else 'false' }}" title="{{ 'Vista' if r.vista else 'Segna tutta la stagione' }}">{{ '✓' if r.vista else ('–' if r.noti and r.visti else '') }}</button>
+          </form>
+          <span class="stagione-nome"><b>{{ s.nome or ('Stagione ' ~ s.numero) }}</b>
+            <small>{% if r.noti %}{{ r.visti }}/{{ r.totale }} visti · {% elif s.episodi %}{{ s.episodi }} episodi · {% endif %}
+            {% if not s.uscita %}data non annunciata
+            {% elif s.uscita > o %}esce il {{ s.uscita|gm }} ({{ s.uscita|fra }})
+            {% elif s.fine and s.fine > o %}in corso, finisce il {{ s.fine|gm }}
+            {% else %}uscita il {{ s.uscita|gm }}{% if s.fine and s.fine != s.uscita %}, completa dal {{ s.fine|gm }}{% endif %}{% endif %}</small></span>
+        </div>
+        {% if eps %}
+        <details class="episodi"{% if r.noti and r.visti and not r.vista %} open{% endif %}>
+          <summary>Episodi</summary>
+          <ol>
+          {% for e in eps %}
+            {% set visto_ep = e.numero in r.numeri_visti %}
+            <li class="{{ 'visto' if visto_ep }}{{ ' futuro' if not e.uscita or e.uscita > o }}">
+              <form method="post" class="in-riga">
+                <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="episodio">
+                <input type="hidden" name="n" value="{{ s.numero }}"><input type="hidden" name="e" value="{{ e.numero }}">
+                <button class="spunta piccola" aria-pressed="{{ 'true' if visto_ep else 'false' }}" title="{{ 'Visto' if visto_ep else 'Segna visto' }}" {% if not visto_ep and (not e.uscita or e.uscita > o) %}disabled{% endif %}>{{ '✓' if visto_ep else '' }}</button>
+              </form>
+              <span><b>{{ e.numero }}.</b> {{ e.nome or ('Episodio ' ~ e.numero) }}<small>{% if e.uscita %}{{ e.uscita|gm }}{% if e.uscita > o %} ({{ e.uscita|fra }}){% endif %}{% else %}data non annunciata{% endif %}{% if e.durata %} · {{ e.durata }} min{% endif %}</small></span>
+            </li>
+          {% endfor %}
+          </ol>
+        </details>
+        {% endif %}
       </li>
     {% endfor %}
     </ul>

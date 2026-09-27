@@ -47,7 +47,8 @@ class Finto:
         return copy.deepcopy(self.schede.get((tipo, n)))
 
     def stagione(self, n, s):
-        return {"episodes": [{"air_date": d} for d in self.episodi.get((n, s), [])]}
+        return {"episodes": [{"air_date": d, "episode_number": i + 1, "name": f"Ep {i + 1}"}
+                             for i, d in enumerate(self.episodi.get((n, s), []))]}
 
     def scopri(self, tipo, ids, pagina, dal):
         r = [x for i in ids for x in self.catalogo.get(i, []) if (x.get("title") and tipo == "movie") or (x.get("name") and tipo == "tv")]
@@ -124,7 +125,9 @@ atteso("consiglio Netflix: stagioni 1-2 da vedere", [nf["verdetto"]], "attiva")
 c.execute("UPDATE miei SET viste_fino=? WHERE titolo_id='tv:1'", (d10.isoformat(),)); c.commit()
 nf = next(v for v in logica.consigli(c, d10) if v["s"]["nome"] == "Netflix")
 atteso("«viste fino a oggi» (import): aspetta la 3, non è vista", [nf["verdetto"] + " " + nf["testo"]], "aspetta")
-atteso("«viste fino a oggi» copre solo le uscite", [str(sorted(db.viste_tutte(c, "tv:1", c.execute("SELECT * FROM miei WHERE titolo_id='tv:1'").fetchone())))], "[1, 2]")
+riga = c.execute("SELECT * FROM miei WHERE titolo_id='tv:1'").fetchone()
+atteso("«viste fino a oggi» copre solo le uscite",
+       [str(sorted(n for n, r in db.riepilogo(c, "tv:1", riga, d10.isoformat()).items() if r["vista"]))], "[1, 2]")
 c.execute("UPDATE miei SET viste_fino=NULL, stagioni_viste='1,2' WHERE titolo_id='tv:1'"); c.commit()
 nf = next(v for v in logica.consigli(c, d10) if v["s"]["nome"] == "Netflix")
 atteso("viste 1-2: aspetta la 3", [nf["verdetto"] + " " + nf["testo"]], "aspetta")
@@ -133,8 +136,27 @@ nf = next(v for v in logica.consigli(c, d10 + dt.timedelta(6)) if v["s"]["nome"]
 atteso("stagione in corso: aspetta la fine, non «attiva»", [nf["verdetto"] + " " + nf["testo"]],
        f"aspetta Aspetta fino al {(d10 + dt.timedelta(19)).strftime('%d/%m/%Y')}")
 atteso("salto di più notti: completa arriva lo stesso", notte(c, api, d10 + dt.timedelta(25)), "stagione 3 completa")
-nf = next(v for v in logica.consigli(c, d10 + dt.timedelta(25)) if v["s"]["nome"] == "Netflix")
+d35 = d10 + dt.timedelta(25)
+nf = next(v for v in logica.consigli(c, d35) if v["s"]["nome"] == "Netflix")
 atteso("stagione completa: attiva", [nf["verdetto"]], "attiva")
+atteso("episodi della stagione 3 salvati", [str(c.execute("SELECT COUNT(*) FROM episodi WHERE titolo_id='tv:1' AND stagione=3").fetchone()[0])], "3")
+dv = logica.da_vedere(c, d35)["tv:1"]
+atteso("3 episodi da vedere", [str(dv["episodi"])], "3")
+# un episodio visto: ne restano 2, il verdetto non cambia
+c.execute("INSERT INTO visti_ep VALUES ('tv:1', 3, 1, ?, 'mano')", (d35.isoformat(),)); c.commit()
+atteso("visto l'episodio 1: 2 da vedere", [str(logica.da_vedere(c, d35)["tv:1"]["episodi"])], "2")
+# stagione 3 spuntata intera, poi tolgo solo l'episodio 2: restano visti 1 e 3, e le stagioni 1-2
+c.execute("UPDATE miei SET stagioni_viste='1,2,3' WHERE titolo_id='tv:1'"); c.commit()
+atteso("stagione intera spuntata: niente da vedere", [str("tv:1" in logica.da_vedere(c, d35))], "False")
+riga = c.execute("SELECT * FROM miei WHERE titolo_id='tv:1'").fetchone()
+db.materializza(c, "tv:1", riga, d35.isoformat())
+c.execute("DELETE FROM visti_ep WHERE titolo_id='tv:1' AND stagione=3 AND numero=2"); c.commit()
+riga = c.execute("SELECT * FROM miei WHERE titolo_id='tv:1'").fetchone()
+r = db.riepilogo(c, "tv:1", riga, d35.isoformat())
+atteso("togliere l'ep. 2 lascia 1 e 3, e le stagioni 1-2", [f"{sorted(r[3]['numeri_visti'])} {r[1]['vista']} {r[2]['vista']}"], "[1, 3] True True")
+atteso("...e l'episodio 2 torna da vedere", [str(logica.da_vedere(c, d35)["tv:1"]["episodi"])], "1")
+c.execute("UPDATE miei SET stagioni_viste='1,2', viste_fino=NULL WHERE titolo_id='tv:1'")
+c.execute("DELETE FROM visti_ep WHERE titolo_id='tv:1'"); c.commit()
 
 # fine serie
 api.schede[("tv", 1)]["status"] = "Ended"

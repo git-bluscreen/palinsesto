@@ -247,3 +247,18 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 .proposta legend { font-weight: 600; padding: 0 .3rem; }
 .candidato { display: flex; gap: .6rem; align-items: center; color: var(--testo); font-size: .9rem; }
 .candidato img { border-radius: 4px; }
+
+/* --- episodi --- */
+.stagioni li { flex-direction: column; align-items: stretch; gap: .4rem; }
+.stagione-testa { display: flex; gap: .75rem; align-items: center; }
+.stagione-nome { flex: 1; min-width: 0; }
+.spunta.parziale { border-color: var(--ok); color: var(--ok); }
+.episodi summary { cursor: pointer; color: var(--accento); font-size: .85rem; padding-left: calc(32px + .75rem); }
+.episodi ol { list-style: none; margin: .4rem 0 0; padding: 0; display: grid; gap: .3rem; }
+.episodi ol li { flex-direction: row; align-items: center; gap: .6rem; border: 0; background: var(--superficie-2); padding: .35rem .5rem; border-radius: 8px; }
+.episodi ol li.visto { opacity: .6; }
+.episodi ol li.futuro { opacity: .5; }
+.spunta.piccola { width: 26px; height: 26px; border-radius: 6px; font-size: .8rem; }
+.spunta:disabled { cursor: default; opacity: .4; }
+.stagioni li.vista { opacity: 1; }
+.stagioni li.vista > .stagione-testa { opacity: .65; }
