@@ -282,7 +282,7 @@ a.riga-dove:hover { text-decoration: none; background: var(--superficie-2); bord
 
 /* --- consigliati: fila che scorre di lato, anche col pollice --- */
 .fila { display: grid; grid-auto-flow: column; grid-auto-columns: 128px; gap: .75rem; overflow-x: auto;
-        scroll-snap-type: x proximity; padding-bottom: .5rem; margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+        scroll-snap-type: x proximity; padding-bottom: .5rem; }   /* allineata alle altre sezioni, niente sbordo */
 @media (min-width: 620px) { .fila { grid-auto-columns: 150px; } }
 .consigliato { display: grid; gap: .3rem; align-content: start; scroll-snap-align: start; min-width: 0; }
 .motivo { color: var(--tenue); font-size: .72rem; line-height: 1.3; }
