@@ -1,0 +1,9 @@
+[Unit]
+Description=Palinsesto: copia del database alle 00:40 (il backup PBS parte alle 01:00)
+
+[Timer]
+OnCalendar=*-*-* 00:40:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

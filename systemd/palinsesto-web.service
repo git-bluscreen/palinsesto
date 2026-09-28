@@ -4,15 +4,15 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=claude
-WorkingDirectory=/home/claude/palinsesto
-ExecStart=/usr/bin/python3 /home/claude/palinsesto/app.py
+User=palinsesto
+WorkingDirectory=/home/palinsesto/palinsesto
+ExecStart=/usr/bin/python3 /home/palinsesto/palinsesto/app.py
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/home/claude/.local/share/palinsesto /home/claude/.config/palinsesto
+ReadWritePaths=/home/palinsesto/.local/share/palinsesto /home/palinsesto/.config/palinsesto
 
 [Install]
 WantedBy=multi-user.target
