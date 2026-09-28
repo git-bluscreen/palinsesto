@@ -70,13 +70,15 @@ def salva_base(c, tipo, x):
     sovrascrivere una scheda completa gia' presente."""
     from tmdb import anno_di, titolo_di, originale_di
     tid = f"{tipo}:{x['id']}"
-    c.execute("""INSERT INTO titoli (id, tipo, tmdb_id, titolo, originale, anno, poster, sfondo, trama)
-                 VALUES (?,?,?,?,?,?,?,?,?)
+    generi = ",".join(map(str, x.get("genre_ids") or [])) or None
+    c.execute("""INSERT INTO titoli (id, tipo, tmdb_id, titolo, originale, anno, poster, sfondo, trama, generi_id)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)
                  ON CONFLICT(id) DO UPDATE SET
                    titolo=excluded.titolo, poster=COALESCE(excluded.poster, poster),
-                   trama=CASE WHEN dettagli=1 THEN trama ELSE excluded.trama END""",
+                   trama=CASE WHEN dettagli=1 THEN trama ELSE excluded.trama END,
+                   generi_id=COALESCE(generi_id, excluded.generi_id)""",
               (tid, tipo, x["id"], titolo_di(x), originale_di(x), anno_di(x),
-               x.get("poster_path"), x.get("backdrop_path"), x.get("overview")))
+               x.get("poster_path"), x.get("backdrop_path"), x.get("overview"), generi))
     return tid
 
 
@@ -111,11 +113,12 @@ def salva_scheda(c, api, tipo, tmdb_id, oggi, con_stagioni=True):
     prossimo = d.get("next_episode_to_air") or {}
     c.execute("""INSERT INTO titoli (id, tipo, tmdb_id) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING""",
               (tid, tipo, tmdb_id))
-    c.execute("""UPDATE titoli SET titolo=?, originale=?, anno=?, poster=?, sfondo=?, trama=?, generi=?,
+    c.execute("""UPDATE titoli SET titolo=?, originale=?, anno=?, poster=?, sfondo=?, trama=?, generi=?, generi_id=?,
                  stato=?, durata=?, prossimo_ep=?, prossimo_ep_sigla=?, dettagli=1, aggiornato=?
                  WHERE id=?""",
               (nome, originale_di(d), anno_di(d), d.get("poster_path"), d.get("backdrop_path"),
                d.get("overview"), ", ".join(g["name"] for g in d.get("genres", [])),
+               ",".join(str(g["id"]) for g in d.get("genres", [])) or None,
                d.get("status"), d.get("runtime") or (d.get("episode_run_time") or [None])[0],
                prossimo.get("air_date"),
                f"S{prossimo['season_number']:02d}E{prossimo['episode_number']:02d}" if prossimo else None,
@@ -274,44 +277,61 @@ def sincronizza_da_vedere(c, oggi, solo=None):
     return tolti, rimessi
 
 
-CONSIGLI_PESO = {"mi_piace": 3.0, "visto": 2.0, "lista": 1.0}
+CONSIGLI_PESO = {"mi_piace": 3.0, "visto": 2.0, "lista": 1.0, "nascosto": -1.5}
 CONSIGLI_VOTO_MIN, CONSIGLI_VOTI_MIN = 6.3, 50     # sotto, TMDB consiglia anche cose che nessuno ha visto
 CONSIGLI_CANDIDATI, CONSIGLI_TENUTI = 40, 24
+NASCOSTI_SEMI = 40         # i «non mi interessa» piu' recenti che insegnano (una chiamata TMDB l'uno)
+
+
+def peso_seme(c, s, oggi, dv):
+    """Quanto conta un mio titolo per i gusti: mi piace > visto > in lista."""
+    return CONSIGLI_PESO["mi_piace"] if s["mi_piace"] else \
+        CONSIGLI_PESO["visto"] if finito(c, s, oggi, dv) else CONSIGLI_PESO["lista"]
 
 
 def calcola_consigliati(c, api, oggi):
     """Somma i «consigliati» di TMDB di ogni mio titolo, pesati: mi piace > visto >
-    in lista, e piu' in alto nella lista di TMDB = piu' punti. Scarta i miei, i
-    nascosti, quelli con pochi voti o voto basso, e quelli che non si vedono su
-    un servizio seguito; spinta del 25% a chi e' su un servizio a cui sono
-    abbonato. Il motivo mostrato e' il titolo che ha contribuito di piu'.
+    in lista, e piu' in alto nella lista di TMDB = piu' punti. I «non mi
+    interessa» fanno da semi negativi: chi somiglia a loro perde punti. Scarta i
+    miei, i nascosti, quelli con pochi voti o voto basso, e quelli che non si
+    vedono su un servizio seguito; spinta del 25% a chi e' su un servizio a cui
+    sono abbonato. Il motivo mostrato e' il titolo che ha contribuito di piu'.
+    Tiene anche le somiglianze grezze (senza filtri sul voto) per «In arrivo».
     Sostituisce l'intera tabella: ritorna quanti consigli ha tenuto."""
     miei = {r[0] for r in c.execute("SELECT titolo_id FROM miei")}
     via = {r[0] for r in c.execute("SELECT titolo_id FROM nascosti")}
     dv = da_vedere(c, oggi)
-    punti, motivi, dati = {}, {}, {}
-    semi = c.execute("SELECT t.*, m.mi_piace, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id").fetchall()
-    for s in semi:
-        peso = CONSIGLI_PESO["mi_piace"] if s["mi_piace"] else \
-            CONSIGLI_PESO["visto"] if finito(c, s, oggi, dv) else CONSIGLI_PESO["lista"]
-        for i, x in enumerate(api.consigliati(s["tipo"], s["tmdb_id"])[:20]):
-            tipo = x.get("media_type") or s["tipo"]
+    punti, grezzi, motivi, dati = {}, {}, {}, {}
+    semi = [(s["tipo"], s["tmdb_id"], s["titolo"], peso_seme(c, s, oggi, dv))
+            for s in c.execute("SELECT t.*, m.mi_piace, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id").fetchall()]
+    for (tid,) in c.execute("SELECT titolo_id FROM nascosti ORDER BY quando DESC LIMIT ?", (NASCOSTI_SEMI,)).fetchall():
+        tipo, n = tid.split(":")
+        semi.append((tipo, int(n), None, CONSIGLI_PESO["nascosto"]))
+    for tipo_s, tmdb_s, nome_s, peso in semi:
+        for i, x in enumerate(api.consigliati(tipo_s, tmdb_s)[:20]):
+            tipo = x.get("media_type") or tipo_s
             if tipo not in ("movie", "tv"):
                 continue
             tid = f"{tipo}:{x['id']}"
             if tid in miei or tid in via or x.get("adult"):
                 continue
+            p = peso * (1 - i / 25)
+            grezzi[tid] = grezzi.get(tid, 0) + p
+            if p > 0:
+                motivi.setdefault(tid, {}).setdefault(nome_s, 0)
+                motivi[tid][nome_s] += p
             if (x.get("vote_count") or 0) < CONSIGLI_VOTI_MIN or (x.get("vote_average") or 0) < CONSIGLI_VOTO_MIN:
                 continue
-            p = peso * (1 - i / 25)
             punti[tid] = punti.get(tid, 0) + p
-            motivi.setdefault(tid, {}).setdefault(s["titolo"], 0)
-            motivi[tid][s["titolo"]] += p
             dati[tid] = (tipo, x)
+    c.execute("DELETE FROM somiglianze")
+    c.executemany("INSERT INTO somiglianze VALUES (?,?,?,?)",
+                  [(tid, round(p, 3), max(motivi[tid].items(), key=lambda y: y[1])[0] if tid in motivi else None, iso(oggi))
+                   for tid, p in grezzi.items() if c.execute("SELECT 1 FROM titoli WHERE id=?", (tid,)).fetchone()])
     serv = {r["id"]: r for r in c.execute("SELECT * FROM servizi WHERE seguito=1")}
     mappa = {r["id"]: r["servizio_id"] for r in c.execute("SELECT id, servizio_id FROM provider WHERE servizio_id IS NOT NULL")}
     tenuti = []
-    for tid in sorted(punti, key=punti.get, reverse=True)[:CONSIGLI_CANDIDATI]:
+    for tid in [t for t in sorted(punti, key=punti.get, reverse=True) if punti[t] > 0][:CONSIGLI_CANDIDATI]:
         tipo, x = dati[tid]
         it = api.provider_di(tipo, x["id"])
         dove = sorted({mappa[p["provider_id"]] for o in ABBONAMENTO for p in it.get(o, [])
@@ -329,6 +349,73 @@ def calcola_consigliati(c, api, oggi):
         salva_base(c, tipo, x)
         c.execute("INSERT INTO consigliati VALUES (?,?,?,?,?)", (tid, round(p, 3), motivo, ",".join(map(str, dove)), iso(oggi)))
     return min(len(tenuti), CONSIGLI_TENUTI)
+
+
+# --- gusti ----------------------------------------------------------------------
+# Generi TMDB (film e serie) in italiano: stabili da anni, e una chiamata in
+# meno. Un id sconosciuto si mostra col numero, non si perde.
+GENERI = {28: "Azione", 12: "Avventura", 16: "Animazione", 35: "Commedia", 80: "Crime", 99: "Documentario",
+          18: "Dramma", 10751: "Famiglia", 14: "Fantasy", 36: "Storia", 27: "Horror", 10402: "Musica",
+          9648: "Mistero", 10749: "Romance", 878: "Fantascienza", 10770: "Film TV", 53: "Thriller",
+          10752: "Guerra", 37: "Western", 10759: "Action & Adventure", 10762: "Bambini", 10763: "News",
+          10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap", 10767: "Talk", 10768: "War & Politics"}
+GUSTI_PRUDENZA = 2.0       # un genere visto una volta sola non decide niente
+INTERESSE_SI, INTERESSE_NO = 0.35, -0.35
+
+
+def ids_generi(testo):
+    return [int(g) for g in (testo or "").split(",") if g.strip().isdigit()]
+
+
+def gusti(c, oggi, dv=None):
+    """{genere: da -1 a 1}: i miei titoli spingono in su col peso dei consigli,
+    i «non mi interessa» in giu'. Calcolata al volo: un 👍 o un 👎 conta subito."""
+    dv = da_vedere(c, oggi) if dv is None else dv
+    piu, meno = {}, {}
+    for s in c.execute("SELECT t.*, m.mi_piace, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id").fetchall():
+        for g in ids_generi(s["generi_id"]):
+            piu[g] = piu.get(g, 0) + peso_seme(c, s, oggi, dv)
+    for r in c.execute("SELECT t.generi_id FROM nascosti n JOIN titoli t ON t.id=n.titolo_id"):
+        for g in ids_generi(r[0]):
+            meno[g] = meno.get(g, 0) - CONSIGLI_PESO["nascosto"]
+    return {g: (piu.get(g, 0) - meno.get(g, 0)) / (piu.get(g, 0) + meno.get(g, 0) + GUSTI_PRUDENZA)
+            for g in set(piu) | set(meno)}
+
+
+def interesse(c, righe, g):
+    """Per ogni titolo {id: (valore, motivo)}: la media dei gusti sui suoi generi
+    piu' la somiglianza ai miei secondo TMDB (la somiglianza massima vale 1).
+    Il motivo e' il titolo a cui somiglia di piu', altrimenti il genere preferito."""
+    mx = c.execute("SELECT MAX(ABS(punti)) FROM somiglianze").fetchone()[0] or 1
+    som = {r["titolo_id"]: r for r in c.execute("SELECT * FROM somiglianze")}
+    out = {}
+    for r in righe:
+        gg = [x for x in ids_generi(r["generi_id"]) if x in g]
+        v = sum(g[x] for x in gg) / len(gg) if gg else 0
+        k = som.get(r["id"])
+        motivo = None
+        if k:
+            v += k["punti"] / mx
+            if k["punti"] > 0 and k["motivo"]:
+                motivo = f"come «{k['motivo']}»"
+        if not motivo and gg:
+            top = max(gg, key=g.get)
+            if g[top] > 0:
+                motivo = f"ti piace: {GENERI.get(top, top)}"
+        out[r["id"]] = (round(v, 3), motivo)
+    return out
+
+
+def completa_generi(c, api, quanti=60):
+    """I titoli di cui servono i generi e non li abbiamo: i nascosti salvati prima
+    che i generi si tenessero. Una chiamata ciascuno, al massimo `quanti` a notte."""
+    righe = c.execute("""SELECT t.id, t.tipo, t.tmdb_id FROM titoli t JOIN nascosti n ON n.titolo_id=t.id
+                         WHERE t.generi_id IS NULL LIMIT ?""", (quanti,)).fetchall()
+    for r in righe:
+        d = api.get(f"/{r['tipo']}/{r['tmdb_id']}") or {}
+        ids = ",".join(str(x["id"]) for x in d.get("genres", []))
+        c.execute("UPDATE titoli SET generi_id=? WHERE id=?", (ids, r["id"]))    # '' = chiesto, nessun genere
+    return len(righe)
 
 
 def cronologia_a_rischio(s):

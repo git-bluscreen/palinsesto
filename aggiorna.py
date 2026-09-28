@@ -268,6 +268,9 @@ def main():
         log(f"in arrivo: {e} (restano quelli di ieri)")
 
     try:
+        n = logica.completa_generi(c, api); c.commit()
+        if n:
+            log(f"generi completati: {n}")
         n = logica.calcola_consigliati(c, api, oggi); c.commit()
         log(f"consigliati: {n}")
     except tmdb.ErroreTMDB as e:

@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS titoli (
   tmdb_id INTEGER NOT NULL,
   titolo TEXT, originale TEXT, anno INTEGER,
   poster TEXT, sfondo TEXT, trama TEXT, generi TEXT,
+  generi_id TEXT,                  -- id dei generi TMDB, '18,10765': servono ai gusti
   stato TEXT,                      -- tv: Returning Series / Ended / Canceled...
   durata INTEGER,
   prossimo_ep TEXT,                -- data del prossimo episodio annunciato
@@ -166,10 +167,20 @@ CREATE TABLE IF NOT EXISTS in_arrivo (
   PRIMARY KEY (servizio_id, titolo_id)
 );
 
--- «Non mi interessa»: mai piu' fra i consigliati
+-- «Non mi interessa»: mai piu' fra i consigliati ne' fra gli arrivi, e
+-- insegna: chi gli somiglia perde punti
 CREATE TABLE IF NOT EXISTS nascosti (
   titolo_id TEXT PRIMARY KEY,
   quando TEXT
+);
+
+-- quanto ogni titolo somiglia ai miei (e ai nascosti, in negativo) secondo i
+-- consigliati di TMDB, PRIMA dei filtri sul voto: la usa «In arrivo», dove le
+-- serie nuove non hanno ancora voti. Ricalcolata ogni notte
+CREATE TABLE IF NOT EXISTS somiglianze (
+  titolo_id TEXT PRIMARY KEY,
+  punti REAL, motivo TEXT,
+  calcolato TEXT
 );
 
 CREATE INDEX IF NOT EXISTS disp_aperte ON disponibilita(titolo_id) WHERE fino IS NULL;
@@ -205,6 +216,9 @@ def migra(c):
         c.commit()
     if "tolto_auto" not in colonne:
         c.execute("ALTER TABLE miei ADD COLUMN tolto_auto TEXT")
+        c.commit()
+    if "generi_id" not in {r[1] for r in c.execute("PRAGMA table_info(titoli)")}:
+        c.execute("ALTER TABLE titoli ADD COLUMN generi_id TEXT")   # riempita dal giro notturno
         c.commit()
     serv = {r[1] for r in c.execute("PRAGMA table_info(servizi)")}
     if "pausa_fino" not in serv:

@@ -338,17 +338,30 @@ def schede_elenco(righe):
 
 def arrivi(sid=None, quanti=None):
     """Cosa arriva sui servizi (tabella in_arrivo): un elemento per titolo, con
-    tutti i servizi su cui arriva, i miei segnati."""
-    q = """SELECT a.*, s.nome AS servizio, t.titolo, t.poster, t.tipo,
+    tutti i servizi su cui arriva, i miei segnati, i «non mi interessa» fuori.
+    Ognuno ha il suo interesse (logica.interesse): dentro un mese in alto
+    quello che mi somiglia. Con `quanti`, i piu' interessanti in ordine di data."""
+    q = """SELECT a.*, s.nome AS servizio, t.titolo, t.poster, t.tipo, t.generi_id, t.id,
                   EXISTS(SELECT 1 FROM miei m WHERE m.titolo_id=a.titolo_id) AS mio
            FROM in_arrivo a JOIN servizi s ON s.id=a.servizio_id JOIN titoli t ON t.id=a.titolo_id
-           WHERE s.seguito=1 AND a.data >= ?""" + (" AND a.servizio_id=?" if sid else "") + " ORDER BY a.data, t.titolo"
+           WHERE s.seguito=1 AND a.data >= ?
+             AND NOT EXISTS (SELECT 1 FROM nascosti n WHERE n.titolo_id=a.titolo_id)""" + \
+        (" AND a.servizio_id=?" if sid else "") + " ORDER BY a.data, t.titolo"
     out = {}
-    for r in c().execute(q, (oggi().isoformat(), sid) if sid else (oggi().isoformat(),)):
+    righe = c().execute(q, (oggi().isoformat(), sid) if sid else (oggi().isoformat(),)).fetchall()
+    for r in righe:
         x = out.setdefault(r["titolo_id"], dict(r=r, dove={}))
         x["dove"][r["servizio_id"]] = r["servizio"]
-    v = list(out.values())
-    return v[:quanti] if quanti else v
+    punti = logica.interesse(c(), [x["r"] for x in out.values()], logica.gusti(c(), oggi()))
+    for tid, x in out.items():
+        x["interesse"], x["motivo"] = punti[tid]
+        x["piace"] = x["interesse"] >= logica.INTERESSE_SI and not x["r"]["mio"]
+        x["lontano"] = x["interesse"] <= logica.INTERESSE_NO and not x["r"]["mio"]
+        x["peso"] = 2 if x["r"]["mio"] else x["interesse"]     # i miei prima di tutto
+    v = sorted(out.values(), key=lambda x: (x["r"]["data"][:7], -x["peso"], x["r"]["data"], x["r"]["titolo"] or ""))
+    if quanti:
+        v = sorted(sorted(v, key=lambda x: -x["peso"])[:quanti], key=lambda x: (x["r"]["data"], x["r"]["titolo"] or ""))
+    return v
 
 
 def conta_arrivi():
@@ -538,6 +551,8 @@ def consigliati_azione():
     az = request.form.get("azione")
     if az == "nascondi":
         c().execute("INSERT OR IGNORE INTO nascosti VALUES (?,?)", (tid, oggi().isoformat()))
+    elif az == "ripristina":
+        c().execute("DELETE FROM nascosti WHERE titolo_id=?", (tid,))
     elif az == "aggiungi":
         lid = int(db.meta(c(), "lista_da_vedere") or 0)
         mio(tid, crea=True)
@@ -811,7 +826,9 @@ def impostazioni():
     servizi = c().execute("SELECT * FROM servizi ORDER BY seguito DESC, ordine, nome").fetchall()
     provider = c().execute("""SELECT p.*, (SELECT COUNT(DISTINCT titolo_id) FROM disponibilita d WHERE d.provider_id=p.id) AS n
                               FROM provider p ORDER BY p.servizio_id IS NULL, p.priorita, p.nome""").fetchall()
-    return render_template("impostazioni.html", servizi=servizi, provider=provider)
+    nascosti = c().execute("""SELECT t.* FROM nascosti n JOIN titoli t ON t.id=n.titolo_id
+                              ORDER BY n.quando DESC, t.titolo""").fetchall()
+    return render_template("impostazioni.html", servizi=servizi, provider=provider, nascosti=nascosti)
 
 
 @app.route("/impostazioni", methods=["POST"])

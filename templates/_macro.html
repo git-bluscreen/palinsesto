@@ -43,13 +43,26 @@
 </div>
 {% endmacro %}
 
-{% macro riga_arrivo(x) %}
-<li><a href="{{ link(x.r.titolo_id) }}">
+{# Riga di «In arrivo» col pollice su (in «Da vedere», e insegna i gusti) e
+   giu' (non comparira' piu', e insegna in negativo). `csrf` e `torna` passati
+   a mano come in fila_consigliati. Le form stanno fuori dal link: un form in un
+   <a> non vale. #}
+{% macro riga_arrivo(x, csrf, torna) %}
+{% set aid = 'arr-' ~ x.r.titolo_id|replace(':', '-') %}
+<li id="{{ aid }}" class="riga-arrivo{{ ' lontano' if x.lontano }}"><a href="{{ link(x.r.titolo_id) }}">
   {% if x.r.poster %}<img src="{{ img(x.r.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% else %}<span class="segnaposto-riga"></span>{% endif %}
   <span><b>{{ x.r.titolo }}</b>
     <small><span class="genere-{{ x.r.genere|replace(' ', '-') }}">{{ x.r.cosa }}</span> · {{ x.r.data|gm }} ({{ x.r.data|fra }}){% if x.r.mio %} · <b class="tuo">nei tuoi</b>{% endif %}</small>
+    {% if x.piace %}<small class="per-te">Potrebbe piacerti{% if x.motivo %} · {{ x.motivo }}{% endif %}</small>{% endif %}
     <span class="servizi-mini">{% for sid, nome in x.dove.items() %}<span class="chip">{{ nome }}</span>{% endfor %}</span></span>
-</a></li>
+</a>
+{% if not x.r.mio %}
+<form method="post" action="/consigliati" class="gusto"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ x.r.titolo_id }}"><input type="hidden" name="torna" value="{{ torna }}#{{ aid }}">
+  <button name="azione" value="aggiungi" class="su" title="Mi interessa: in «Da vedere», e ti proporrò cose simili" aria-label="Mi interessa: {{ x.r.titolo }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10v11M7 10H4v11h3M7 10l4-7a2 2 0 0 1 3 1.7V9h5.2a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 17.8 21H7"/></svg></button>
+  <button name="azione" value="nascondi" class="giu" title="Non mi interessa: non comparirà più, e cose simili scenderanno" aria-label="Non mi interessa: {{ x.r.titolo }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 14V3M17 14h3V3h-3M17 14l-4 7a2 2 0 0 1-3-1.7V15H4.8a2 2 0 0 1-2-2.3l1.4-8A2 2 0 0 1 6.2 3H17"/></svg></button>
+</form>
+{% endif %}
+</li>
 {% endmacro %}
 
 {% macro logo_servizio(s, misura='w92') %}

@@ -17,11 +17,11 @@
       <ul class="elenco-righe">
       {% set ns.mese = mese %}
     {% endif %}
-    {{ mm.riga_arrivo(x) }}
+    {{ mm.riga_arrivo(x, csrf, request.full_path.rstrip('?')) }}
   {% endfor %}
   </ul>
 {% else %}
   <p class="vuoto">Niente in arrivo{% if sid %} su questo servizio{% endif %} nei prossimi 60 giorni, o il calcolo notturno non è ancora girato.</p>
 {% endif %}
-<p class="nota">Nei prossimi 60 giorni: <span class="genere-stagione">stagioni nuove</span> di serie già sul servizio, serie originali che debuttano (<span class="genere-nuova-serie">nuova serie</span>) e, per le serie che segui, anche i singoli episodi. Esclusi talk show, reality, notiziari, soap e programmi per bambini. <b>I film non ci sono</b>: nessuno annuncia con una data quando un film arriva su un servizio in Italia. NOW mostra solo le serie già in catalogo: non ha una «rete» su TMDB. Aggiornato {{ calcolato|gm if calcolato else 'mai' }}.</p>
+<p class="nota">Nei prossimi 60 giorni: <span class="genere-stagione">stagioni nuove</span> di serie già sul servizio, serie originali che debuttano (<span class="genere-nuova-serie">nuova serie</span>) e, per le serie che segui, anche i singoli episodi. Dentro ogni mese, in alto quello che somiglia ai tuoi titoli: il <b>pollice su</b> lo mette in «Da vedere», il <b>pollice giù</b> lo toglie per sempre (si ripristina da Impostazioni), e tutti e due insegnano cosa proporti. Esclusi talk show, reality, notiziari, soap e programmi per bambini. <b>I film non ci sono</b>: nessuno annuncia con una data quando un film arriva su un servizio in Italia. NOW mostra solo le serie già in catalogo: non ha una «rete» su TMDB. Aggiornato {{ calcolato|gm if calcolato else 'mai' }}.</p>
 {% endblock %}

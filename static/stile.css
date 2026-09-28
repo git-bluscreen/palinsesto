@@ -296,6 +296,18 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 .tuo { color: var(--ok); font-weight: 600; }
 .mese { margin-top: 1.5rem; }
 .elenco-righe a > span { min-width: 0; }
+.riga-arrivo { display: flex; gap: .4rem; align-items: stretch; }
+.riga-arrivo > a { flex: 1; min-width: 0; }
+.riga-arrivo.lontano > a { opacity: .6; }
+.gusto { display: flex; flex-direction: column; gap: .3rem; margin: 0; }
+.gusto button { flex: 1; min-width: 44px; min-height: 30px; padding: 0 .4rem; font-size: 1rem; line-height: 1;
+                background: var(--superficie); border: 1px solid var(--bordo); border-radius: 10px; cursor: pointer; }
+.gusto button:hover { background: var(--superficie-2); }
+.gusto svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.gusto .su { color: var(--ok); }
+.gusto .giu { color: var(--tenue); }
+.gusto .giu:hover { color: var(--male); }
+.per-te { display: block; color: var(--accento); font-weight: 500; }
 
 /* «Conviene?»: schede tutte uguali, i testi lunghi si tagliano invece di allungarle */
 .consiglio { height: 100%; min-width: 0; }

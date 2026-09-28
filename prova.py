@@ -25,7 +25,7 @@ class Finto:
     def __init__(self):
         self.schede = {
             ("tv", 1): {"id": 1, "name": "Serie Uno", "status": "Returning Series", "overview": "trama",
-                        "first_air_date": "2020-01-01", "genres": [], "episode_run_time": [50],
+                        "first_air_date": "2020-01-01", "genres": [{"id": 10765, "name": "Sci-Fi & Fantasy"}], "episode_run_time": [50],
                         "seasons": [{"season_number": 0, "name": "Speciali", "air_date": "2020-01-01", "episode_count": 2},
                                     {"season_number": 1, "air_date": "2020-01-01", "episode_count": 8},
                                     {"season_number": 2, "air_date": "2022-01-01", "episode_count": 8}],
@@ -55,7 +55,10 @@ class Finto:
         if (tipo, n) == ("tv", 1):
             return [dict(id=50, name="Consigliata Netflix", media_type="tv", **buono), dict(id=51, name="Senza servizio", media_type="tv", **buono),
                     dict(id=52, name="Voto basso", media_type="tv", vote_count=500, vote_average=4.0), dict(id=2, title="Film Due", media_type="movie", **buono),
-                    dict(id=53, name="Nascosta", media_type="tv", **buono)]
+                    dict(id=53, name="Nascosta", media_type="tv", **buono),
+                    dict(id=60, name="Torna con la 2", media_type="tv", vote_count=3, vote_average=8.0)]   # pochi voti: non consigliata, ma somiglia
+        if (tipo, n) == ("tv", 53):          # il nascosto insegna in negativo
+            return [dict(id=62, name="Originale nuova", media_type="tv", **buono)]
         return [dict(id=50, name="Consigliata Netflix", media_type="tv", **buono)]   # TMDB dice sempre il tipo
 
     def provider_di(self, tipo, n):
@@ -68,15 +71,16 @@ class Finto:
         piu = lambda n: (o + dt.timedelta(days=n)).isoformat()
         if percorso == "/discover/tv" and "with_watch_providers" in p:
             netflix = "8" in p["with_watch_providers"].split("|")
-            return {"results": [dict(id=60, name="Torna con la 2"), dict(id=61, name="Settimanale"),
+            return {"results": [dict(id=60, name="Torna con la 2", genre_ids=[10765]), dict(id=61, name="Settimanale"),
                                 dict(id=63, name="Troppo lontana")] if netflix else []}
         if percorso == "/discover/tv" and "with_networks" in p:
-            return {"results": [dict(id=62, name="Originale nuova", first_air_date=piu(20))] if p["with_networks"] == 213 else []}
+            return {"results": [dict(id=62, name="Originale nuova", first_air_date=piu(20), genre_ids=[80])] if p["with_networks"] == 213 else []}
         prossimi = {60: dict(air_date=piu(10), season_number=2, episode_number=1),
                     61: dict(air_date=piu(3), season_number=4, episode_number=5),
                     63: dict(air_date=piu(90), season_number=1, episode_number=1)}
         if percorso.startswith("/tv/"):
-            return {"next_episode_to_air": prossimi.get(int(percorso.split("/")[2]))}
+            n = int(percorso.split("/")[2])
+            return {"next_episode_to_air": prossimi.get(n), "genres": [{"id": 80}] if n == 53 else []}
         return None
 
     def scopri(self, tipo, ids, pagina, dal):
@@ -272,6 +276,20 @@ n = logica.calcola_consigliati(c, api, d50); c.commit()
 k = [(r["titolo"], r["motivo"]) for r in c.execute("SELECT t.titolo, k.motivo FROM consigliati k JOIN titoli t ON t.id=k.titolo_id")]
 atteso("consigliati: solo quello su un mio servizio, col motivo", [f"{t} {m}" for t, m in k], "Consigliata Netflix per «Serie Uno» e altri")   # quanti «altri» dipende dai titoli dei casi precedenti
 atteso("...niente miei, nascosti, voto basso o senza servizio", [str(n)], "1")
+
+# gusti: 👍 e 👎 insegnano cosa proporre fra gli arrivi
+atteso("i generi del nascosto si completano (salvato prima dei generi)", [str(logica.completa_generi(c, api)),
+       c.execute("SELECT generi_id FROM titoli WHERE id='tv:53'").fetchone()[0]], "1", "80")
+logica.calcola_consigliati(c, api, d50); c.commit()
+som = {r[0]: r[1] for r in c.execute("SELECT titolo_id, punti FROM somiglianze")}
+atteso("somiglianze: anche senza voti (serie nuove), e il nascosto in negativo",
+       [f"{som.get('tv:60', 0) > 0} {som.get('tv:62', 0) < 0}"], "True True")
+g = logica.gusti(c, d50)
+atteso("gusti: Sci-Fi su (Serie Uno, mi piace), Crime giù (il nascosto)", [f"{g[10765] > 0} {g[80] < 0}"], "True True")
+righe = c.execute("SELECT * FROM titoli WHERE id IN ('tv:60','tv:62')").fetchall()
+it = logica.interesse(c, righe, g)
+atteso("interesse: quella simile ai miei «potrebbe piacerti», col motivo", [f"{it['tv:60'][0] >= logica.INTERESSE_SI} {it['tv:60'][1]}"], "True come «Serie Uno»")
+atteso("...quella simile al nascosto in basso", [str(it["tv:62"][0] <= logica.INTERESSE_NO)], "True")
 
 # notifica: un solo messaggio, poi niente
 aggiorna.notifica(c, {"Netflix": 1}, prova=True)

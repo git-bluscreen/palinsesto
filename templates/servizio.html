@@ -33,7 +33,7 @@
 {% if arrivi %}
 <section>
   <h2 class="sezione-titolo">In arrivo su {{ s.nome }} · {{ n_arrivi }} {% if n_arrivi > arrivi|length %}<a class="tutti" href="{{ url_for('in_arrivo', servizio=s.id) }}">tutto</a>{% endif %}</h2>
-  <ul class="elenco-righe">{% for y in arrivi %}{{ mm.riga_arrivo(y) }}{% endfor %}</ul>
+  <ul class="elenco-righe">{% for y in arrivi %}{{ mm.riga_arrivo(y, csrf, request.path) }}{% endfor %}</ul>
 </section>
 {% endif %}
 

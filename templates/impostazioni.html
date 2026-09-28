@@ -21,6 +21,26 @@
 </section>
 
 <section>
+  <h2 class="sezione-titolo">Non mi interessano · {{ nascosti|length }}</h2>
+  <p class="nota">I titoli segnati «Non mi interessa» (o col pollice giù): non compaiono fra i consigliati né fra gli arrivi, e quelli simili scendono. «Ripristina» li rimette in gioco.</p>
+  {% if nascosti %}
+  <details class="riquadro">
+    <summary>Mostra</summary>
+    <ul class="elenco-provider">
+    {% for t in nascosti %}
+      <li>
+        {% if t.poster %}<img src="{{ img(t.poster, 'w92') }}" alt="" width="28" height="42" loading="lazy">{% endif %}
+        <span><a href="{{ link(t.id) }}">{{ t.titolo }}</a> <small>{{ 'Serie' if t.tipo == 'tv' else 'Film' }}{% if t.anno %} · {{ t.anno }}{% endif %}</small></span>
+        <form method="post" action="/consigliati" class="riga-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ t.id }}"><input type="hidden" name="torna" value="/impostazioni">
+          <button class="tenue" name="azione" value="ripristina">Ripristina</button></form>
+      </li>
+    {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</section>
+
+<section>
   <h2 class="sezione-titolo">Provider TMDB</h2>
   <p class="nota">TMDB distingue le varianti (con pubblicità, canali su Prime Video o Apple TV): qui decidi a quale servizio appartiene ciascuna. «n» è il numero di tuoi titoli visti su quel provider. Da un provider non assegnato puoi creare un servizio nuovo.</p>
   <details class="riquadro">

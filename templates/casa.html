@@ -62,7 +62,7 @@
   <nav class="schede-servizi" aria-label="In arrivo per servizio">
     {% for s in conta_arrivi %}<a href="{{ url_for('in_arrivo', servizio=s.id) }}">{{ s.nome }} · {{ s.n }}</a>{% endfor %}
   </nav>
-  <ul class="elenco-righe">{% for x in arrivi %}{{ mm.riga_arrivo(x) }}{% endfor %}</ul>
+  <ul class="elenco-righe">{% for x in arrivi %}{{ mm.riga_arrivo(x, csrf, '/') }}{% endfor %}</ul>
 </section>
 {% endif %}
 
