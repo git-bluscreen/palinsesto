@@ -366,5 +366,10 @@ atteso("...un promemoria che non serve piu' si toglie, l'evento altrui resta",
        [str(calendario.sincronizza(pc, lista[1:], fc)), str(sorted(fc.file))], "(0, 1)", "altro-evento.ics")
 atteso("...testo con virgole e a capo in formato iCalendar", [calendario.testo_ics("a, b; c\nd")], "a\\, b\; c\\nd")
 
+pc.execute("INSERT INTO servizi (id, nome, stato, prezzo, ciclo, fine) VALUES (9, 'Disdetto in offerta', 'disdetto', 2.99, 'mese', ?)", (iso(90),)); pc.commit()
+az = {a["s"]["nome"]: (a["tipo"], a["testo"]) for a in logica.piano(pc, D, 25, ancora=D)["azioni"]}
+atteso("disdetto ma ancora pagato: lo dice, non «non ti serve»", [str(az["Disdetto in offerta"])], "('pagato', 'Già disdetto, attivo fino al 30 dic')")
+atteso("...e nessun promemoria per lui", [e["uid"] for e in logica.promemoria(pc, D, logica.piano(pc, D, 25, ancora=D)) if e["uid"].endswith("-9") or "-9-" in e["uid"]])
+
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

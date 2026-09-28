@@ -630,6 +630,10 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
                 if dopo is not None:
                     testo += f"; riattivalo verso il {breve(per[dopo][0])}"
                 azioni.append(dict(s=s, tipo="disdici", quando=r or oggi, testo=testo))
+        elif s["stato"] == "disdetto" and sid in pagato and not pagati:
+            testo = f"Già disdetto, attivo fino al {breve(pagato[sid])}"
+            azioni.append(dict(s=s, tipo="pagato", quando=pagato[sid],
+                               testo=testo + (": usalo per quello che il piano gli assegna" if usi else "")))
         elif s["stato"] == "attivo":
             azioni.append(dict(s=s, tipo="pagato", quando=pagato.get(sid), testo=f"Annuale, pagato fino al {breve(data(s['rinnovo']))}" if s["rinnovo"] else "Annuale"))
         elif pagati:
