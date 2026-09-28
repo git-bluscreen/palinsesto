@@ -45,14 +45,15 @@
       {% elif a.tipo == 'riprendi' %}<button class="interruttore piccolo" name="azione" value="ripreso">L'ho ripreso oggi</button>
       {% else %}<button class="interruttore piccolo" name="azione" value="attivato">L'ho attivato oggi</button>{% endif %}
     </form>
-    {% if (a.tipo == 'disdici' and not a.pausa) or a.tipo == 'proroga' %}
+    {% set prolunga = a.tipo == 'proroga' or a.forse %}
+    {% if (a.tipo == 'disdici' and not a.pausa) or prolunga %}
     <details class="pausa">
-      <summary class="interruttore piccolo">{{ "L'ho messo in pausa" if a.tipo == 'disdici' else "Ho prolungato la pausa" }}</summary>
+      <summary class="interruttore piccolo">{{ "Ho prolungato la pausa" if prolunga else "L'ho messo in pausa" }}</summary>
       <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="modulo-pausa">
         <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="/piano">
         <label>In pausa fino al<input type="date" name="fino" required value="{{ tre_mesi(a.pausa or a.s.rinnovo or o) }}"></label>
-        {% if a.tipo == 'disdici' %}<label>Proroghe possibili dopo questa<input type="number" name="proroghe" min="0" max="9" value="{{ a.s.pausa_proroghe or '' }}" placeholder="es. 1"></label>{% endif %}
-        <button class="primario" name="azione" value="{{ 'pausa' if a.tipo == 'disdici' else 'prolungata' }}">Salva</button>
+        {% if not prolunga %}<label>Proroghe possibili dopo questa<input type="number" name="proroghe" min="0" max="9" value="{{ a.s.pausa_proroghe if a.s.pausa_proroghe is not none else '' }}" placeholder="vuoto = non lo so"></label>{% endif %}
+        <button class="primario" name="azione" value="{{ 'prolungata' if prolunga else 'pausa' }}">Salva</button>
       </form>
     </details>
     {% endif %}

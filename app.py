@@ -741,7 +741,7 @@ def abbonamento_salva(sid):
         if not pausa_fino or pausa_fino <= oggi().isoformat():
             abort(400)
         proroghe = request.form.get("pausa_proroghe", type=int)
-        proroghe = proroghe if proroghe and 0 < proroghe < 10 else None
+        proroghe = proroghe if proroghe is not None and 0 <= proroghe < 10 else None    # vuoto = non si sa
         stato = "attivo"
     prezzo = request.form.get("prezzo", "").replace(",", ".").strip()
     try:
@@ -782,11 +782,11 @@ def abbonamento_fatto(sid):
             abort(400)
         n = request.form.get("proroghe", type=int)
         c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=? WHERE id=?",
-                    (fino, fino, n if n and 0 < n < 10 else None, sid))
+                    (fino, fino, n if n is not None and 0 <= n < 10 else None, sid))
     elif az == "prolungata" and pausa:
         if not fino or fino <= s["pausa_fino"]:
             abort(400)
-        c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=MAX(COALESCE(pausa_proroghe, 0) - 1, 0) WHERE id=?",
+        c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=CASE WHEN pausa_proroghe IS NULL THEN NULL ELSE MAX(pausa_proroghe - 1, 0) END WHERE id=?",
                     (fino, fino, sid))
     elif az == "ripreso" and pausa:
         rinnovo = logica.piu_mesi(o, 12 if s["ciclo"] == "anno" else 1)

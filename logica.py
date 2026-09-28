@@ -654,7 +654,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
             prima = [i for i in pagati if per[i][0] < pf]
             subito = [i for i in pagati if per[i][1] >= pf and i <= periodo_di(pf) + 1]
             dopo = [i for i in pagati if per[i][1] >= pf]
-            n = s["pausa_proroghe"] or 0
+            n = s["pausa_proroghe"]            # None = non si sa (i servizi lo propongono a ridosso, e cambiano)
             if prima:
                 q = max(per[prima[0]][0], oggi)
                 azioni.append(dict(s=s, tipo="riprendi", quando=q, pausa=pf,
@@ -664,6 +664,10 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
             elif n:
                 azioni.append(dict(s=s, tipo="proroga", quando=pf, pausa=pf,
                                    testo=f"La pausa finisce il {breve(pf)}: prolungala (ne rest{'a' if n == 1 else 'ano'} {n})"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            elif n is None:
+                azioni.append(dict(s=s, tipo="disdici", quando=pf, pausa=pf, forse=True,
+                                   testo=f"La pausa finisce il {breve(pf)}: prolungala se te lo propone, altrimenti disdici prima che riparta"
                                          + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
             else:
                 azioni.append(dict(s=s, tipo="disdici", quando=pf, pausa=pf,
@@ -745,9 +749,12 @@ def promemoria(c, oggi, p):
                                testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')} e poi riparte e addebita. Prolungala "
                                      f"(proroghe rimaste: {s['pausa_proroghe']}) o disdici, poi segnalo in Palinsesto."))
             elif a["tipo"] == "disdici":
+                forse = a.get("forse")
                 ev.append(dict(uid=f"disdici-{sid}", giorno=max(pf - dt.timedelta(days=1), oggi), avviso=2,
-                               titolo=f"Disdici {s['nome']}",
-                               testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')}: se non disdici, riparte e addebita."))
+                               titolo=f"{s['nome']}: prolunga la pausa o disdici" if forse else f"Disdici {s['nome']}",
+                               testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')}: se non fai niente, riparte e addebita. "
+                                     + ("Se il servizio ti propone di prolungarla, prolungala; altrimenti disdici. " if forse else "")
+                                     + "Poi segnalo in Palinsesto."))
             else:
                 ev.append(dict(uid=f"riparte-{sid}", giorno=pf, avviso=0, titolo=f"{s['nome']} riparte dalla pausa",
                                testo=f"Finisce la pausa e riparte l'abbonamento: ti serve per {', '.join(titoli(mie.values()))}."))

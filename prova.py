@@ -384,6 +384,10 @@ atteso("...non conta nella spesa di oggi", [f"{pp['oggi_attivi']:.2f}"], "59.94"
 pc.execute("UPDATE servizi SET pausa_proroghe=0 WHERE id=10"); pc.commit()
 pp, a, ev = pausa_az()
 atteso("pausa senza proroghe: disdici prima che riparta", [f"{a['tipo']} {ev['disdici-10']['titolo']}"], "disdici Disdici In pausa")
+pc.execute("UPDATE servizi SET pausa_proroghe=NULL WHERE id=10"); pc.commit()
+pp, a, ev = pausa_az()
+atteso("proroghe non note: «prolungala se te lo propone, altrimenti disdici»", [f"{a['tipo']} {a['testo']} | {ev['disdici-10']['titolo']}"],
+       "disdici La pausa finisce il 20 nov: prolungala se te lo propone, altrimenti disdici prima che riparta | In pausa: prolunga la pausa o disdici")
 serie(110, "Esce durante la pausa", [10], [iso(-20)] * 6)
 pp, a, ev = pausa_az()
 atteso("esce qualcosa durante la pausa: riprendilo, con promemoria", [f"{a['tipo']} {a['testo']} {ev['riprendi-10']['titolo']}"], "riprendi Riprendilo dalla pausa adesso Riprendi In pausa dalla pausa")
