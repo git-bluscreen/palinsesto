@@ -1,7 +1,9 @@
 """Il piano sul calendario di Nextcloud, via CalDAV.
 
-Un calendario «abbonamenti» dell'utente Nextcloud `palinsesto` (dedicato: per
-revocare basta disattivarlo), condiviso in sola lettura con l'utente vero.
+Il calendario e' DELL'UTENTE (un calendario chiamato «Palinsesto»), che lo condivide con
+permesso di modifica all'utente Nextcloud dedicato `palinsesto` (per revocare:
+togliere la condivisione o disattivare l'utente). Palinsesto non crea
+calendari suoi: se la condivisione sparisce, l'errore compare in /piano.
 Credenziali in ~/.config/palinsesto/caldav.json {url, utente, password},
 da scrivere senza farle comparire a schermo.
 
@@ -10,7 +12,6 @@ stesso promemoria si sposta; quando non serve piu', si cancella. Si tocca solo
 cio' che inizia con «palinsesto-»: il resto del calendario non e' nostro.
 """
 import datetime as dt, hashlib, json, re
-from xml.sax.saxutils import escape
 
 import requests
 
@@ -18,7 +19,7 @@ import db
 from tmdb import CONF
 
 FILE = CONF / "caldav.json"
-NOME = "abbonamenti"
+NOME = "palinsesto"          # il calendario condiviso si riconosce dal nome che comincia cosi'
 PAGINA = "https://palinsesto.example.org/piano"
 
 
@@ -54,7 +55,8 @@ class Calendario:
         self.s.auth = (cf["utente"], cf["password"])
         self.utente = cf["utente"]
         self.radice = cf["url"].rstrip("/")
-        self.base = f"{self.radice}/calendars/{cf['utente']}/{NOME}/"
+        self.casa = f"{self.radice}/calendars/{cf['utente']}/"
+        self.base = None
         self.timeout = timeout
 
     def _r(self, metodo, url, atteso, **kw):
@@ -64,24 +66,24 @@ class Calendario:
         return r
 
     def assicura(self):
-        """Crea il calendario se non c'e'. Ritorna True se l'ha creato."""
-        r = self._r("PROPFIND", self.base, (207, 404), headers={"Depth": "0"})
-        if r.status_code == 207:
-            return False
-        corpo = ('<?xml version="1.0" encoding="utf-8"?>'
-                 '<c:mkcalendar xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:a="http://apple.com/ns/ical/">'
-                 '<d:set><d:prop><d:displayname>Abbonamenti (Palinsesto)</d:displayname>'
-                 '<a:calendar-color>#E0A444</a:calendar-color>'
-                 '<c:supported-calendar-component-set><c:comp name="VEVENT"/></c:supported-calendar-component-set>'
-                 '</d:prop></d:set></c:mkcalendar>')
-        self._r("MKCALENDAR", self.base, (201,), data=corpo.encode(), headers={"Content-Type": "application/xml"})
-        return True
-
-    def condividi(self, utente):
-        """Condivide il calendario in SOLA LETTURA (formato di condivisione di Nextcloud)."""
-        corpo = ('<?xml version="1.0" encoding="utf-8"?><o:share xmlns:d="DAV:" xmlns:o="http://owncloud.org/ns">'
-                 f'<o:set><d:href>principal:principals/users/{escape(utente)}</d:href></o:set></o:share>')
-        self._r("POST", self.base, (200, 204), data=corpo.encode(), headers={"Content-Type": "application/xml"})
+        """Trova il calendario condiviso: di un ALTRO utente, nome che comincia per
+        «Palinsesto», scrivibile. Deve essercene esattamente uno."""
+        corpo = ('<?xml version="1.0"?><d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">'
+                 '<d:prop><d:displayname/><oc:owner-principal/><d:current-user-privilege-set/></d:prop></d:propfind>')
+        r = self._r("PROPFIND", self.casa, (207,), data=corpo.encode(), headers={"Depth": "1"})
+        buoni = []
+        for blocco in r.text.split("<d:response>")[1:]:
+            href = re.search(r"<d:href>([^<]+)</d:href>", blocco)
+            nome = re.search(r"<d:displayname>([^<]*)</d:displayname>", blocco)
+            chi = re.search(r"owner-principal>([^<]*)<", blocco)
+            if href and nome and chi and not chi.group(1).endswith("/" + self.utente) \
+                    and nome.group(1).lower().startswith(NOME) and "<d:write/>" in blocco:
+                buoni.append(href.group(1))
+        if len(buoni) != 1:
+            raise RuntimeError("calendario condiviso «Palinsesto» " + ("non trovato: va condiviso con l'utente palinsesto, "
+                               "con «può modificare»" if not buoni else f"ambiguo ({len(buoni)} trovati)"))
+        self.base = self.radice.split("/remote.php")[0] + buoni[0]
+        return self.base
 
     def elenco(self):
         r = self._r("PROPFIND", self.base, (207,), headers={"Depth": "1"},
@@ -140,11 +142,5 @@ def aggiorna(c, oggi=None):
 
 
 if __name__ == "__main__":
-    # a mano, da terminale:  python3 calendario.py            sincronizza adesso
-    #                       python3 calendario.py --condividi NOME   condivide in sola lettura
-    import sys
-    c = db.apri()
-    if len(sys.argv) == 3 and sys.argv[1] == "--condividi":
-        cal = Calendario(conf()); cal.assicura(); cal.condividi(sys.argv[2])
-        print(f"condiviso in sola lettura con {sys.argv[2]}")
-    print("calendario:", aggiorna(c))
+    # a mano, da terminale: sincronizza adesso
+    print("calendario:", aggiorna(db.apri()))
