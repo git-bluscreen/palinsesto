@@ -321,3 +321,4 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 .rimando a:hover { text-decoration: none; background: var(--superficie-2); border-radius: var(--raggio); }
 .rimando b { color: var(--accento); }
 .azioni-piano .etichetta { margin-left: .25rem; }
+.calendario-stato { margin: 0 0 .5rem; }

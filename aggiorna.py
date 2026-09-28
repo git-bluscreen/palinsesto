@@ -24,7 +24,7 @@ import requests
 
 QUI = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(QUI))
-import db, logica, tmdb
+import calendario, db, logica, tmdb
 
 # Servizi predefiniti e i provider TMDB che ne fanno parte. Gli id sono quelli
 # verificati sull'elenco IT; le varianti (con pubblicita', canali) si
@@ -273,6 +273,13 @@ def main():
     except tmdb.ErroreTMDB as e:
         c.rollback()
         log(f"consigliati: {e} (restano quelli di ieri)")
+
+    try:
+        esito = calendario.aggiorna(c, oggi) if not o.prova else None
+        if esito:
+            log(f"calendario: {esito[0]} eventi scritti, {esito[1]} tolti")
+    except Exception as e:          # il calendario non deve fermare gli avvisi; l'esito resta in meta e in pagina
+        log(f"calendario: {e}")
 
     for t in nuovi:
         log(f"evento: {t}")

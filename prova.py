@@ -329,10 +329,42 @@ serie(107, "Rete TV", [3], [iso(-5 + 7 * i) for i in range(4)])
 pc.execute("INSERT INTO stagioni (titolo_id, numero, episodi, uscita) VALUES ('tv:107', 0, 0, NULL)")
 pc.execute("UPDATE stagioni SET numero=2 WHERE titolo_id='tv:107' AND numero=1"); pc.execute("UPDATE episodi SET stagione=2 WHERE titolo_id='tv:107'")
 pc.execute("INSERT INTO stagioni (titolo_id, numero, episodi, uscita) VALUES ('tv:107', 1, 20, ?)", (iso(-400),))
-pc.execute("INSERT INTO visti_ep SELECT 'tv:107', 1, n, ?, 'mano' FROM (WITH RECURSIVE k(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM k WHERE n<20) SELECT n FROM k)", (iso(0),))
+pc.execute("UPDATE miei SET stagioni_viste='1' WHERE titolo_id='tv:107'")     # la precedente e' vista: non entra nel piano
 pc.commit()
 f, stim = logica.fine_stagione(pc, "tv:107", 2)
 atteso("stagione con pochi episodi annunciati: fine stimata sulla precedente", [f"{f} {stim}"], f"{D + dt.timedelta(-5 + 7 * 19)} True")
+
+# periodi ancorati: domani le date del piano non si spostano
+a1 = {a["s"]["nome"]: a["testo"] for a in logica.piano(pc, D + dt.timedelta(1), 25, ancora=D)["azioni"]}
+atteso("piano ancorato: il giorno dopo la data di attivazione resta la stessa", [a1["Spento"]], "Attivalo verso il 31 ott")
+q0 = logica.piano(pc, D + dt.timedelta(10), 25, ancora=D)["periodi"][0]
+atteso("...il primo periodo gia' iniziato ha meno ore", [f"{q0['inizio']} {q0['disponibili']}"], f"{D} 16.7")
+
+# promemoria per il calendario
+pp = logica.piano(pc, D, 25, ancora=D)
+ev = {e["uid"]: e for e in logica.promemoria(pc, D, pp)}
+atteso("promemoria: disdici il mensile il giorno prima del rinnovo", [f"{ev['disdici-1']['giorno']} {ev['disdici-1']['avviso']}"], f"{D + dt.timedelta(19)} 2")
+atteso("...attiva lo spento al suo periodo, con i titoli", [f"{ev['attiva-2-0']['giorno']} {ev['attiva-2-0']['testo'][:60]}"],
+       f"{D + dt.timedelta(30)} Da guardare: Sullo spento, Sullo spento, finisce dopo.")
+atteso("...e disdicilo prima dei 30 giorni pagati", [str(ev["disdici-2-0"]["giorno"])], str(D + dt.timedelta(58)))
+atteso("...niente per l'annuale", [u for u in ev if u.endswith("-3") or "-3-" in u])
+
+import calendario
+class FintoCal:
+    def __init__(self): self.file = {}; self.chiamate = []
+    def assicura(self): return False
+    def elenco(self): return set(self.file)
+    def metti(self, n, t): self.file[n] = t; self.chiamate.append("PUT " + n)
+    def togli(self, n): self.file.pop(n, None); self.chiamate.append("DELETE " + n)
+fc = FintoCal(); fc.file["altro-evento.ics"] = "non nostro"
+lista = logica.promemoria(pc, D, pp)
+atteso("calendario: prima scrittura", [str(calendario.sincronizza(pc, lista, fc))], f"({len(lista)}, 0)")
+atteso("...ics con allarme due giorni prima alle 9", [fc.file["palinsesto-disdici-1.ics"]], "TRIGGER:-P1DT15H", "DTSTART;VALUE=DATE:20261020", esatti=False)
+fc.chiamate.clear()
+atteso("...seconda volta, niente cambiato: nessuna scrittura", [str(calendario.sincronizza(pc, lista, fc)) + " " + str(fc.chiamate)], "(0, 0) []")
+atteso("...un promemoria che non serve piu' si toglie, l'evento altrui resta",
+       [str(calendario.sincronizza(pc, lista[1:], fc)), str(sorted(fc.file))], "(0, 1)", "altro-evento.ics")
+atteso("...testo con virgole e a capo in formato iCalendar", [calendario.testo_ics("a, b; c\nd")], "a\\, b\; c\\nd")
 
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

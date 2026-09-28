@@ -16,6 +16,16 @@
   <button class="tenue">Ricalcola</button>
 </form>
 
+{% if cal_configurato %}
+<form method="post" class="calendario-stato nota">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="calendario">
+  {% if cal and cal.ok %}📅 Sul calendario «Abbonamenti» di Nextcloud: {{ cal.eventi }} promemoria, aggiornati il {{ cal.quando[:16].replace('T', ' alle ') }}.
+  {% elif cal %}<span class="allarme">📅 Calendario non aggiornato: {{ cal.errore }} ({{ cal.quando[:16].replace('T', ' ') }}).</span>
+  {% else %}📅 Calendario non ancora scritto.{% endif %}
+  <button class="collegamento">Aggiorna adesso</button>
+</form>
+{% endif %}
+
 <section>
   <h2 class="sezione-titolo">Cosa fare adesso</h2>
   <ul class="elenco-righe azioni-piano">
@@ -51,7 +61,7 @@
       <p class="vuoto">Niente in programma.</p>
       {% endfor %}
       {% for r in x.rinvii %}<p class="nota">{{ r.s.nome }}: {{ r.motivo }}.</p>{% endfor %}
-      <p class="nota">Tempo occupato: {{ x.ore|ore }} su {{ p.ore_mese }} h.</p>
+      <p class="nota">Tempo occupato: {{ x.ore|ore }} su {{ x.disponibili|ore }}{% if loop.first and x.disponibili < p.ore_mese %} (il periodo è già iniziato){% endif %}.</p>
     </article>
   {% endfor %}
   </div>
@@ -73,5 +83,5 @@
 </section>
 {% endif %}
 
-<p class="nota">Come ragiona il piano: periodi di 30 giorni da oggi, come un abbonamento mensile. Una stagione entra nel piano quando è completa, e si guarda tutta di seguito. Si usa prima quello che hai già pagato, poi si attiva un servizio quando c'è abbastanza da guardarci, quando un titolo aspetta da tre mesi, o quando non arriva altro da unire. Disdire subito dopo aver attivato di solito lascia il servizio attivo fino alla fine del mese pagato. Le date di fine segnate «stima» contano un episodio a settimana.</p>
+<p class="nota">Come ragiona il piano: periodi di 30 giorni, come un abbonamento mensile, contati sempre dallo stesso giorno perché le date non scivolino. Una stagione entra nel piano quando è completa, e si guarda tutta di seguito. Si usa prima quello che hai già pagato, poi si attiva un servizio quando c'è abbastanza da guardarci, quando un titolo aspetta da tre mesi, o quando non arriva altro da unire. Disdire subito dopo aver attivato di solito lascia il servizio attivo fino alla fine del mese pagato. Le date di fine segnate «stima» contano un episodio a settimana.</p>
 {% endblock %}

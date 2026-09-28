@@ -507,7 +507,18 @@ def prezzo_mese(s, medio):
     return medio, True
 
 
-def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
+def ancora_piano(c, oggi):
+    """Il giorno da cui partono i periodi, fissato la prima volta. Con periodi
+    contati da oggi le date scivolerebbero di un giorno ogni notte, e un
+    «attiva verso il 28/10» non arriverebbe mai: sul calendario non si puo'."""
+    from db import meta
+    a = meta(c, "piano_ancora")
+    if not a:
+        a = iso(oggi); meta(c, "piano_ancora", a); c.commit()
+    return data(a)
+
+
+def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
     """Il piano: per ogni periodo, quali servizi tenere o attivare e cosa guardarci.
     Greedy e spiegabile, non ottimo: prima i servizi gia' pagati, poi chi deve
     continuare, poi i nuovi dal piu' carico. Un servizio si attiva se ha
@@ -516,7 +527,9 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
     serv = {s["id"]: s for s in c.execute("SELECT * FROM servizi WHERE seguito=1 ORDER BY ordine, nome")}
     noti = sorted(s["prezzo"] for s in serv.values() if s["prezzo"] and s["ciclo"] == "mese")
     medio = noti[len(noti) // 2] if noti else 0.0
-    per = [(oggi + dt.timedelta(days=PIANO_GIORNI * i), oggi + dt.timedelta(days=PIANO_GIORNI * (i + 1) - 1))
+    ancora = min(ancora or oggi, oggi)
+    primo = (oggi - ancora).days // PIANO_GIORNI
+    per = [(ancora + dt.timedelta(days=PIANO_GIORNI * (primo + i)), ancora + dt.timedelta(days=PIANO_GIORNI * (primo + i + 1) - 1))
            for i in range(periodi)]
     pagato = {}                                    # servizio -> ultimo giorno gia' pagato
     for sid, s in serv.items():
@@ -530,7 +543,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
         return sid in pagato and pagato[sid] >= per[i][0] + dt.timedelta(days=PIANO_GIORNI // 2)
 
     def periodo_di(d):
-        return min(max((d - oggi).days, 0) // PIANO_GIORNI, periodi - 1)
+        return min(max((d - per[0][0]).days, 0) // PIANO_GIORNI, periodi - 1)
 
     pezzi, esclusi = lavori(c, oggi)
     resto = sorted(pezzi, key=lambda v: (v["pronto"], v["t"]["titolo"] or ""))
@@ -538,7 +551,9 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
         v["dal"] = periodo_di(v["pronto"])
     out, acceso_prima = [], set()
     for i, (ini, fin) in enumerate(per):
-        cap = float(ore_mese)
+        # il primo periodo e' gia' in parte passato: restano meno ore
+        disponibili = ore_mese * ((fin - oggi).days + 1) / PIANO_GIORNI if i == 0 else ore_mese
+        cap = float(disponibili)
         pronti = lambda sid: [v for v in resto if sid in v["dove"] and v["pronto"] <= fin - dt.timedelta(days=7)]
         voci, rinvii = {}, []
 
@@ -579,7 +594,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
                 continue                            # presi da un servizio scelto prima in questo periodo
             h = sum(v["ore"] for v in mie)
             s = serv[sid]
-            if cap < min(h, ore_mese / 2):
+            if cap < min(h, disponibili / 2):
                 rinvii.append(dict(s=s, motivo="prima finisci quello che hai già in questo periodo"))
                 continue
             limite = per[min(i + ATTESA_UNIONE, periodi - 1)][1] - dt.timedelta(days=7)
@@ -587,7 +602,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
                      and not any(coperto(o, periodo_di(v["pronto"])) for o in v["dove"])]
             continua = sid in acceso_prima
             aspettato = max(i - v["dal"] for v in mie) >= ATTESA_MAX
-            if continua or aspettato or h >= ore_mese * .8 or not unire or i == periodi - 1:
+            if continua or aspettato or h >= disponibili * .8 or not unire or i == periodi - 1:
                 gia = continua or (s["stato"] == "attivo" and i == 0)
                 assegna(sid, "rinnova" if gia else "attiva")
             else:
@@ -597,7 +612,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
         acceso_prima = {sid for sid, x in voci.items() if x["titoli"] and
                         (x["azione"] != "pagato" or (i + 1 < periodi and not coperto(sid, i + 1)))}
         out.append(dict(i=i, inizio=ini, fine=fin, voci=list(voci.values()), rinvii=rinvii,
-                        ore=round(ore_mese - cap, 1), costo=sum(x["costo"] for x in voci.values())))
+                        ore=round(disponibili - cap, 1), disponibili=round(disponibili, 1), costo=sum(x["costo"] for x in voci.values())))
 
     # cosa fare adesso, servizio per servizio
     azioni = []
@@ -634,3 +649,64 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI):
     tutti = round(sum((s["prezzo"] or medio) * (periodi if s["ciclo"] == "mese" else 0) for s in serv.values()), 2)
     return dict(periodi=out, azioni=azioni, oltre=oltre, esclusi=esclusi, spesa=spesa, oggi_attivi=oggi_attivi,
                 tutti=tutti, stimati=[s["nome"] for s in serv.values() if not s["prezzo"]], medio=medio, ore_mese=ore_mese)
+
+
+def promemoria(c, oggi, p):
+    """Gli eventi del calendario dal piano, con UID stabili: lo stesso promemoria
+    si sposta invece di duplicarsi quando il piano cambia.
+    - servizio mensile attivo: «Disdici» il giorno prima del rinnovo in cui non
+      serve piu' (dopo i periodi a pagamento che il piano gli assegna ancora);
+    - servizio non attivo: per ogni tratto di periodi consecutivi, «Attiva» al
+      primo giorno e «Disdici» due giorni prima dei 30 giorni pagati.
+    Quando l'utente segna l'attivazione in Abbonamenti, il servizio diventa
+    attivo e i due eventi del tratto lasciano il posto al «Disdici» del rinnovo."""
+    serv = {s["id"]: s for s in c.execute("SELECT * FROM servizi WHERE seguito=1")}
+    pagati = {}
+    for q in p["periodi"]:
+        for x in q["voci"]:
+            if x["azione"] != "pagato":
+                pagati.setdefault(x["s"]["id"], {})[q["i"]] = (q, x)
+    ev = []
+
+    def titoli(voci):
+        t = []
+        for q, x in voci:
+            for y in x["titoli"]:
+                if y["t"]["titolo"] not in t:
+                    t.append(y["t"]["titolo"])
+        return t
+
+    for sid, s in serv.items():
+        mie = pagati.get(sid, {})
+        if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"]:
+            r = data(s["rinnovo"])
+            # periodi pagati consecutivi subito dopo la copertura di oggi: tanti rinnovi quanti servono
+            k = next((i for i in range(len(p["periodi"])) if i not in mie and p["periodi"][i]["inizio"] >= r), None)
+            n = len([i for i in mie if k is None or i < k])
+            fine = r + dt.timedelta(days=PIANO_GIORNI * n)
+            ev.append(dict(uid=f"disdici-{sid}", giorno=max(fine - dt.timedelta(days=1), oggi), avviso=2,
+                           titolo=f"Disdici {s['nome']}",
+                           testo=f"Il rinnovo del {fine.strftime('%d/%m/%Y')} non ti serve: disdici prima, resti abbonato fino ad allora."
+                                 + (f"\nDa finire prima: {', '.join(titoli(mie.values()))}." if mie else "")))
+            continue
+        if s["stato"] == "attivo":
+            continue                                   # annuale: niente da ricordare nei sei mesi
+        tratti = []
+        for i in sorted(mie):
+            if tratti and tratti[-1][-1] == i - 1:
+                tratti[-1].append(i)
+            else:
+                tratti.append([i])
+        for n, t in enumerate(tratti):
+            voci = [mie[i] for i in t]
+            inizio = max(voci[0][0]["inizio"], oggi)
+            fine = inizio + dt.timedelta(days=PIANO_GIORNI * len(t))
+            costo = sum(x["costo"] for _, x in voci)
+            ev.append(dict(uid=f"attiva-{sid}-{n}", giorno=inizio, avviso=0, titolo=f"Attiva {s['nome']}",
+                           testo=f"Da guardare: {', '.join(titoli(voci))}.\n{len(t)} mes{'e' if len(t) == 1 else 'i'}, "
+                                 f"{costo:.2f} euro. Segna l'attivazione in Palinsesto, Abbonamenti, con la data del rinnovo."))
+            ev.append(dict(uid=f"disdici-{sid}-{n}", giorno=fine - dt.timedelta(days=2), avviso=2,
+                           titolo=f"Disdici {s['nome']}",
+                           testo=f"Se l'hai attivato il {inizio.strftime('%d/%m/%Y')}, si rinnova il {fine.strftime('%d/%m/%Y')}: "
+                                 "disdici prima. La data esatta e' quella che segni in Abbonamenti."))
+    return ev

@@ -80,6 +80,7 @@ ok("home: link al piano", 'href="/piano"' in s.get(B + "/").text)
 r = s.post(B + "/piano", data=dict(ore=12, csrf=csrf)); ok("ore al mese salvate", r.status_code == 200 and 'value="12"' in r.text)
 r = s.post(B + "/piano", data=dict(ore=0, csrf=csrf)); ok("ore non valide -> 400", r.status_code == 400)
 r = s.post(B + "/piano", data=dict(ore=12)); ok("piano: POST senza CSRF -> 400", r.status_code == 400)
+r = s.post(B + "/piano", data=dict(azione="calendario", csrf=csrf)); ok("aggiorna calendario senza conf: la pagina regge", r.status_code == 200 and "Cosa fare adesso" in r.text)
 h = s.get(B + "/").headers; ok("CSP e no-store", "default-src 'none'" in h["Content-Security-Policy"] and h["Cache-Control"] == "no-store")
 if len(sys.argv) > 1:
     r = requests.get(f"http://{sys.argv[1]}:45091/accesso"); ok("IP non ammesso -> 403", r.status_code == 403, r.status_code)

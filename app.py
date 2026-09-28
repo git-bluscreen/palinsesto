@@ -17,7 +17,7 @@ from flask import Flask, abort, g, redirect, render_template, request, send_file
 
 QUI = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(QUI))
-import db, logica, tmdb
+import calendario, db, logica, tmdb
 
 CONF        = tmdb.CONF
 UTENTE      = CONF / "utente.json"
@@ -695,15 +695,23 @@ def abbonamenti():
 @app.route("/piano", methods=["GET", "POST"])
 def piano():
     if request.method == "POST":
-        ore = request.form.get("ore", type=int)
-        if not ore or not 1 <= ore <= 200:
-            abort(400)
-        db.meta(c(), "ore_mese", ore); c().commit()
+        if request.form.get("azione") != "calendario":
+            ore = request.form.get("ore", type=int)
+            if not ore or not 1 <= ore <= 200:
+                abort(400)
+            db.meta(c(), "ore_mese", ore); c().commit()
+        try:
+            calendario.aggiorna(c(), oggi())         # il calendario segue subito il piano nuovo
+        except Exception as e:
+            log(f"calendario: {e}")                  # l'esito e' in meta e si vede in pagina
         return redirect(url_for("piano"))
     o = oggi()
     logica.scadenze(c(), o); c().commit()
     ore = int(db.meta(c(), "ore_mese") or logica.ORE_MESE)
-    return render_template("piano.html", p=logica.piano(c(), o, ore), breve=logica.breve, o=o)
+    p = logica.piano(c(), o, ore, ancora=logica.ancora_piano(c(), o))
+    cal = json.loads(db.meta(c(), "calendario_esito") or "null") if calendario.conf() else None
+    return render_template("piano.html", p=p, breve=logica.breve, o=o, cal=cal,
+                           cal_configurato=calendario.conf() is not None)
 
 
 def campo_data(nome):
