@@ -147,6 +147,14 @@ def link(tid):
     return url_for("scheda", tipo=tipo, tmdb_id=int(n))
 
 
+@app.template_filter("ore")
+def f_ore(x):
+    """4.5 -> '4,5 h', 8.0 -> '8 h'; sotto l'ora in minuti."""
+    if x < 1:
+        return f"{round(x * 60)} min"
+    return f"{x:.1f} h".replace(".0 h", " h").replace(".", ",")
+
+
 @app.template_filter("euro")
 def f_euro(x):
     return f"{x:.2f} €".replace(".", ",") if x is not None else ""
@@ -682,6 +690,20 @@ def abbonamenti():
         if s["stato"] == "attivo" and s["prezzo"]:
             mensile += s["prezzo"] / (12 if s["ciclo"] == "anno" else 1)
     return render_template("abbonamenti.html", servizi=servizi, consigli=consigli, mensile=mensile, o=o)
+
+
+@app.route("/piano", methods=["GET", "POST"])
+def piano():
+    if request.method == "POST":
+        ore = request.form.get("ore", type=int)
+        if not ore or not 1 <= ore <= 200:
+            abort(400)
+        db.meta(c(), "ore_mese", ore); c().commit()
+        return redirect(url_for("piano"))
+    o = oggi()
+    logica.scadenze(c(), o); c().commit()
+    ore = int(db.meta(c(), "ore_mese") or logica.ORE_MESE)
+    return render_template("piano.html", p=logica.piano(c(), o, ore), breve=logica.breve, o=o)
 
 
 def campo_data(nome):

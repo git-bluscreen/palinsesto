@@ -24,7 +24,8 @@
     <a href="{{ url_for('casa') }}" {% if sezione == 'casa' %}aria-current="page"{% endif %}>Home</a>
     <a href="{{ url_for('liste') }}" {% if sezione in ('liste', 'lista') %}aria-current="page"{% endif %}>Liste</a>
     <a href="{{ url_for('novita') }}" {% if sezione == 'novita' %}aria-current="page"{% endif %}>Novità</a>
-    <a href="{{ url_for('abbonamenti') }}" {% if sezione == 'abbonamenti' %}aria-current="page"{% endif %}>Abbonamenti</a>
+    <a href="{{ url_for('piano') }}" {% if sezione == 'piano' %}aria-current="page"{% endif %}>Piano</a>
+    <a href="{{ url_for('abbonamenti') }}" {% if sezione in ('abbonamenti', 'piano') %}aria-current="page"{% endif %}>Abbonamenti</a>
   </nav>
 </header>
 <main class="pagina">

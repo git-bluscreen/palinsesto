@@ -14,7 +14,7 @@
 {% endif %}
 
 <section>
-  <h2 class="sezione-titolo">Conviene?</h2>
+  <h2 class="sezione-titolo">Conviene? <a class="tutti" href="{{ url_for('piano') }}">piano dei prossimi mesi</a></h2>
   <div class="consigli">
   {% for x in consigli %}
     <a class="consiglio v-{{ x.verdetto }}" href="{{ url_for('servizio', sid=x.s.id) }}">

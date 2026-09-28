@@ -3,6 +3,7 @@
 {% block titolo %}Abbonamenti · Palinsesto{% endblock %}
 {% block corpo %}
 <h1 class="pagina-titolo">Abbonamenti</h1>
+<p class="rimando riquadro"><a href="{{ url_for('piano') }}"><b>Piano dei prossimi mesi ›</b><small>Quale servizio attivare e quando, per vedere tutto pagando meno mesi.</small></a></p>
 <p class="riepilogo">Spesa attuale: <b>{{ mensile|euro }}</b> al mese{% if mensile %} ({{ (mensile * 12)|euro }} all'anno){% endif %}.</p>
 
 {% for s in servizi %}

@@ -300,3 +300,24 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 /* «Conviene?»: schede tutte uguali, i testi lunghi si tagliano invece di allungarle */
 .consiglio { height: 100%; min-width: 0; }
 .consiglio-testo > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* --- piano --- */
+.ore-mese { max-width: 420px; margin: 0 0 .5rem; flex-wrap: wrap; }
+.ore-mese label { flex-basis: 100%; }
+.ore-mese input { max-width: 110px; }
+.periodi { display: grid; gap: .75rem; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 760px) { .periodi { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.periodo { display: grid; gap: .5rem; align-content: start; }
+.periodo-testa { display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; }
+.periodo-testa span { color: var(--tenue); font-size: .9rem; }
+.periodo-servizio p { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0; }
+.periodo-servizio .logo-servizio { width: 28px; height: 28px; border-radius: 7px; }
+.periodo-servizio .prezzo { display: inline; margin-left: auto; }
+.periodo .nota { margin: 0; }
+.periodo .piccola-lista small { display: inline; }
+.piccola-lista small { display: inline; }
+.rimando { padding: 0; margin: 0 0 1rem; }
+.rimando a { display: block; padding: .8rem 1rem; color: var(--testo); }
+.rimando a:hover { text-decoration: none; background: var(--superficie-2); border-radius: var(--raggio); }
+.rimando b { color: var(--accento); }
+.azioni-piano .etichetta { margin-left: .25rem; }

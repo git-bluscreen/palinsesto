@@ -278,5 +278,61 @@ aggiorna.notifica(c, {"Netflix": 1}, prova=True)
 resto = c.execute("SELECT COUNT(*) FROM eventi WHERE notificare=1 AND notificato=0").fetchone()[0]
 atteso("dopo la notifica non resta nulla da notificare", [str(resto)] if resto == 0 else [], "0")
 
+# piano di rotazione: database a parte, scenario costruito a mano
+pc = db.apri(pathlib.Path(os.environ["PALINSESTO_DATI"]) / "piano.db")
+iso = lambda n: (D + dt.timedelta(n)).isoformat()
+for sid, nome, stato, prezzo, ciclo, rinnovo in [(1, "Mensile", "attivo", 9.99, "mese", iso(20)), (2, "Spento", "mai", 5.99, "mese", None),
+                                                 (3, "Annuale", "attivo", 50, "anno", iso(300)), (4, "Senza prezzo", "mai", None, "mese", None)]:
+    pc.execute("INSERT INTO servizi (id, nome, stato, prezzo, ciclo, rinnovo) VALUES (?,?,?,?,?,?)", (sid, nome, stato, prezzo, ciclo, rinnovo))
+    pc.execute("INSERT INTO provider (id, nome, servizio_id) VALUES (?,?,?)", (sid, nome, sid))
+
+def serie(n, nome, dove, date, durata=50):
+    tid = f"tv:{n}"
+    pc.execute("INSERT INTO titoli (id, tipo, tmdb_id, titolo, dettagli) VALUES (?,?,?,?,1)", (tid, "tv", n, nome))
+    pc.execute("INSERT INTO stagioni (titolo_id, numero, episodi, uscita) VALUES (?,1,?,?)", (tid, len(date), date[0]))
+    for i, d in enumerate(date):
+        pc.execute("INSERT INTO episodi VALUES (?,1,?,?,?,?)", (tid, i + 1, f"Ep {i + 1}", d, durata))
+    pc.execute("INSERT INTO miei (titolo_id, aggiunto) VALUES (?,?)", (tid, iso(0)))
+    for p in dove:
+        pc.execute("INSERT INTO disponibilita (titolo_id, provider_id, offerta, dal) VALUES (?,?,'flatrate',?)", (tid, p, iso(-100)))
+
+serie(101, "Sul mensile", [1], [iso(-60)] * 10)                        # 8,3 h, pronta
+serie(102, "Sullo spento", [2], [iso(-60)] * 6)                        # 5 h, pronta
+serie(103, "Sullo spento, finisce dopo", [2], [iso(-10 + 7 * i) for i in range(8)])   # completa a +39
+serie(105, "Senza prezzo", [4], [iso(-30)] * 7)                        # nient'altro in arrivo
+serie(106, "Da nessuna parte", [], [iso(-30)] * 3)
+pc.execute("INSERT INTO titoli (id, tipo, tmdb_id, titolo, durata, dettagli) VALUES ('movie:104','movie',104,'Film ovunque',120,1)")
+pc.execute("INSERT INTO miei (titolo_id, aggiunto) VALUES ('movie:104', ?)", (iso(0),))
+for p in (2, 3):
+    pc.execute("INSERT INTO disponibilita (titolo_id, provider_id, offerta, dal) VALUES ('movie:104',?,'flatrate',?)", (p, iso(-100)))
+pc.commit()
+pp = logica.piano(pc, D, ore_mese=25)
+dove_in = lambda i: {x["s"]["nome"]: (x["azione"], sorted(y["t"]["titolo"] for y in x["titoli"])) for x in pp["periodi"][i]["voci"]}
+az = {a["s"]["nome"]: (a["tipo"], a["testo"]) for a in pp["azioni"]}
+p0, p1 = dove_in(0), dove_in(1)
+atteso("piano: il gia' pagato si usa subito", [str(p0.get("Mensile"))], "('pagato', ['Sul mensile'])")
+atteso("...il film va sull'annuale, non su quello da attivare", [str(p0.get("Annuale"))], "('pagato', ['Film ovunque'])")
+atteso("...lo spento aspetta la serie che finisce dopo", [r["motivo"] for r in pp["periodi"][0]["rinvii"]], "aspetta: verso il 9 nov è pronto anche «Sullo spento, finisce dopo»")
+atteso("...e le prende insieme nel periodo dopo", [str(p1.get("Spento"))], "('attiva', ['Sullo spento', 'Sullo spento, finisce dopo'])")
+atteso("...senza niente da unire si attiva subito, prezzo stimato", [f"{p0.get('Senza prezzo')} {pp['periodi'][0]['voci'][-1]['stimato']}"], "('attiva', ['Senza prezzo']) True")
+atteso("...il mensile senza altro da vedere: disdici prima del rinnovo", [az["Mensile"][1]], "Disdici prima del 21 ott")
+atteso("...lo spento: attivalo al periodo giusto", [az["Spento"][1]], "Attivalo verso il 31 ott")
+atteso("...fuori piano chi non e' su nessun servizio", [v["t"]["titolo"] + " " + v["perche"] for v in pp["esclusi"]], "Da nessuna parte su nessun servizio che segui")
+atteso("...spesa: uno stimato (mediana 9,99) + lo spento", [f"{pp['spesa']:.2f} {pp['oggi_attivi']:.2f}"], "15.98 59.94")
+pp = logica.piano(pc, D, ore_mese=6)
+atteso("piano con poche ore: il troppo si divide e continua", [str(dove_in(0).get("Mensile")), str(dove_in(1).get("Mensile"))],
+       "('pagato', ['Sul mensile'])", "('rinnova', ['Sul mensile'])")
+parti = [y["parte"] for q in pp["periodi"] for x in q["voci"] if x["s"]["nome"] == "Mensile" for y in x["titoli"]]
+atteso("...prima «una parte», alla fine «il resto»", [" / ".join(parti)], "una parte / il resto")
+# stagione di una rete TV: 4 episodi annunciati su una precedente di 20
+serie(107, "Rete TV", [3], [iso(-5 + 7 * i) for i in range(4)])
+pc.execute("INSERT INTO stagioni (titolo_id, numero, episodi, uscita) VALUES ('tv:107', 0, 0, NULL)")
+pc.execute("UPDATE stagioni SET numero=2 WHERE titolo_id='tv:107' AND numero=1"); pc.execute("UPDATE episodi SET stagione=2 WHERE titolo_id='tv:107'")
+pc.execute("INSERT INTO stagioni (titolo_id, numero, episodi, uscita) VALUES ('tv:107', 1, 20, ?)", (iso(-400),))
+pc.execute("INSERT INTO visti_ep SELECT 'tv:107', 1, n, ?, 'mano' FROM (WITH RECURSIVE k(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM k WHERE n<20) SELECT n FROM k)", (iso(0),))
+pc.commit()
+f, stim = logica.fine_stagione(pc, "tv:107", 2)
+atteso("stagione con pochi episodi annunciati: fine stimata sulla precedente", [f"{f} {stim}"], f"{D + dt.timedelta(-5 + 7 * 19)} True")
+
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}Piano · Palinsesto{% endblock %}
+{% set AZIONI = {'disdici': ('Da disdire', 'v-disdici'), 'attiva': ('Da attivare', 'v-attiva'), 'tieni': ('Tienilo', 'v-sfrutta'),
+                 'pagato': ('Già pagato', 'abbonato'), 'niente': ('Non serve', '')} %}
+{% set VOCI = {'pagato': ('già pagato', 'abbonato'), 'attiva': ('da attivare', 'v-attiva'), 'rinnova': ('da rinnovare', 'v-aspetta')} %}
+{% block corpo %}
+<h1 class="pagina-titolo">Piano dei prossimi mesi</h1>
+<p class="riepilogo">In sei mesi spendi <b>{{ p.spesa|euro }}</b> col piano{% if p.oggi_attivi > p.spesa %}, invece di {{ p.oggi_attivi|euro }} tenendo gli abbonamenti mensili di oggi: risparmi <b>{{ (p.oggi_attivi - p.spesa)|euro }}</b>{% endif %}.</p>
+{% if p.stimati %}<p class="nota">Prezzo mancante per {{ p.stimati|join(', ') }}: conto {{ p.medio|euro }} al mese, il prezzo tipico degli altri. Inseriscilo in <a href="{{ url_for('abbonamenti') }}">Abbonamenti</a>.</p>{% endif %}
+
+<form method="post" class="riga-form ore-mese">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="ore">Ore che guardi in un mese</label>
+  <input id="ore" name="ore" type="number" min="1" max="200" value="{{ p.ore_mese }}" inputmode="numeric">
+  <button class="tenue">Ricalcola</button>
+</form>
+
+<section>
+  <h2 class="sezione-titolo">Cosa fare adesso</h2>
+  <ul class="elenco-righe azioni-piano">
+  {% for a in p.azioni %}
+    <li><a href="{{ url_for('servizio', sid=a.s.id) }}">
+      {{ mm.logo_servizio(a.s) }}
+      <span><b>{{ a.s.nome }}</b> <span class="etichetta {{ AZIONI[a.tipo][1] }}">{{ AZIONI[a.tipo][0] }}</span>
+        <small>{{ a.testo }}</small></span>
+    </a></li>
+  {% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2 class="sezione-titolo">Mese per mese</h2>
+  <div class="periodi">
+  {% for x in p.periodi %}
+    <article class="periodo riquadro">
+      <header class="periodo-testa">
+        <b>{{ breve(x.inizio) }} – {{ breve(x.fine) }}</b>
+        <span>{{ x.costo|euro if x.costo else 'nessuna spesa' }}</span>
+      </header>
+      {% for v in x.voci %}
+      <div class="periodo-servizio">
+        <p>{{ mm.logo_servizio(v.s) }}<b>{{ v.s.nome }}</b> <span class="etichetta {{ VOCI[v.azione][1] }}">{{ VOCI[v.azione][0] }}</span>{% if v.costo %} <small class="prezzo">{{ v.costo|euro }}{% if v.stimato %} (stimato){% endif %}</small>{% endif %}</p>
+        <ul class="piccola-lista">
+        {% for y in v.titoli %}
+          <li><a href="{{ link(y.t.id) }}">{{ y.t.titolo }}</a> <small>{{ y.cosa }}{% if y.t.tipo == 'tv' and y.pronto > o %}, completa dal {{ breve(y.pronto) }}{% if y.stimata %} (stima){% endif %}{% endif %} · {{ y.ore|ore }}{% if y.parte %} · {{ y.parte }}{% endif %}</small></li>
+        {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <p class="vuoto">Niente in programma.</p>
+      {% endfor %}
+      {% for r in x.rinvii %}<p class="nota">{{ r.s.nome }}: {{ r.motivo }}.</p>{% endfor %}
+      <p class="nota">Tempo occupato: {{ x.ore|ore }} su {{ p.ore_mese }} h.</p>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+
+{% if p.oltre %}
+<section>
+  <h2 class="sezione-titolo">Più avanti</h2>
+  <ul class="piccola-lista">{% for v in p.oltre %}<li><a href="{{ link(v.t.id) }}">{{ v.t.titolo }}</a> <small>{{ v.cosa }} · pronta dal {{ v.pronto|gm }}{% if v.stimata %} (stima){% endif %}</small></li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if p.esclusi %}
+<section>
+  <details class="riquadro">
+    <summary>Fuori dal piano · {{ p.esclusi|length }}</summary>
+    <ul class="piccola-lista">{% for v in p.esclusi %}<li><a href="{{ link(v.t.id) }}">{{ v.t.titolo }}</a> <small>{{ v.cosa }} · {{ v.perche }}</small></li>{% endfor %}</ul>
+  </details>
+</section>
+{% endif %}
+
+<p class="nota">Come ragiona il piano: periodi di 30 giorni da oggi, come un abbonamento mensile. Una stagione entra nel piano quando è completa, e si guarda tutta di seguito. Si usa prima quello che hai già pagato, poi si attiva un servizio quando c'è abbastanza da guardarci, quando un titolo aspetta da tre mesi, o quando non arriva altro da unire. Disdire subito dopo aver attivato di solito lascia il servizio attivo fino alla fine del mese pagato. Le date di fine segnate «stima» contano un episodio a settimana.</p>
+{% endblock %}
