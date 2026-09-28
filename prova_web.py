@@ -75,6 +75,19 @@ ok("pagina servizio: consigliati", "Consigliati per te su Netflix" in s.get(B + 
 r = s.post(B + "/consigliati", data=dict(azione="nascondi", titolo="tv:50", csrf=csrf))
 ok("«Non mi interessa»: sparisce", r.status_code == 200 and "Consigliata Netflix" not in r.text)
 r = s.post(B + "/consigliati", data=dict(azione="nascondi", titolo="tv:999", csrf=csrf)); ok("consiglio inesistente -> 400", r.status_code == 400)
+# scheda: liste in alto, «Non mi interessa» per i titoli non miei
+r = s.get(B + "/t/tv/62"); ok("scheda non mia: «Non mi interessa» e liste in alto", 'value="nascondi"' in r.text and r.text.index('id="liste"') < r.text.index("Dove lo trovi"))
+r = s.post(B + "/t/tv/62", data=dict(azione="nascondi", csrf=csrf)); ok("...premuto: «✕ Non ti interessa»", "✕ Non ti interessa" in r.text)
+ok("...e fuori da «In arrivo»", "Originale nuova" not in s.get(B + "/in-arrivo").text)
+r = s.post(B + "/t/tv/62", data=dict(azione="nascondi", csrf=csrf)); ok("...ripremuto: torna in gioco", "✕ Non ti interessa" not in r.text and "Originale nuova" in s.get(B + "/in-arrivo").text)
+s.post(B + "/t/tv/62", data=dict(azione="nascondi", csrf=csrf))
+r = s.post(B + "/t/tv/62", data=dict(azione="lista", lista=1, csrf=csrf)); ok("nascosto messo in lista: non è più nascosto", "✓ Da vedere" in r.text and "Originale nuova" not in s.get(B + "/impostazioni").text.split("Provider TMDB")[0])
+ok("...ed è mio: niente «Non mi interessa»", 'value="nascondi"' not in r.text)
+r = s.post(B + "/t/tv/62", data=dict(azione="nascondi", csrf=csrf)); ok("nascondere un mio titolo -> 400", r.status_code == 400)
+s.post(B + "/t/tv/62", data=dict(azione="rimuovi", csrf=csrf))
+r = s.post(B + "/t/tv/62", data=dict(azione="avvisi", csrf=csrf)); ok("«Avvisi spenti» su un titolo non mio: li ACCENDE", "✓ Avvisi attivi" in r.text)
+s.post(B + "/t/tv/62", data=dict(azione="rimuovi", csrf=csrf))
+
 # 👍 e 👎 su «In arrivo»
 r = s.get(B + "/in-arrivo")
 ok("in arrivo: 👍 e 👎 sulle righe non mie", 'value="aggiungi"' in r.text and 'value="nascondi"' in r.text)

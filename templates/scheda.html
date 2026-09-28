@@ -28,7 +28,17 @@
         {% if t.tipo == 'movie' %}{{ bottone('visto', m and m.visto, '✓ Visto', 'Segna visto') }}{% endif %}
         {{ bottone('avvisi', m and m.avvisi, '✓ Avvisi attivi', 'Avvisi spenti') }}
       </div>
-      {% if not m %}<p class="nota">Non è ancora fra i tuoi titoli: aggiungilo a una lista per ricevere gli avvisi.</p>{% endif %}
+      {# le liste fanno da «mi interessa»; «non mi interessa» solo per chi non e' fra i miei:
+         per i miei c'e' «togli dai miei titoli», e i due significati non si mescolano #}
+      <div class="liste-chip liste-scheda" id="liste">
+      {% for l in liste %}
+        <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="lista"><input type="hidden" name="lista" value="{{ l.id }}">
+          <button class="interruttore{{ ' acceso' if l.dentro }}" aria-pressed="{{ 'true' if l.dentro else 'false' }}">{{ '✓ ' if l.dentro else '+ ' }}{{ l.nome }}</button></form>
+      {% endfor %}
+      {% if not m %}{{ bottone('nascondi', nascosto, '✕ Non ti interessa', 'Non mi interessa') }}{% endif %}
+      </div>
+      {% if nascosto %}<p class="nota">Non compare fra i consigliati né fra gli arrivi, e i titoli simili scendono. Ripremi per rimetterlo in gioco, o aggiungilo a una lista.</p>
+      {% elif not m %}<p class="nota">Non è ancora fra i tuoi titoli: aggiungilo a una lista per ricevere gli avvisi.</p>{% endif %}
     </div>
   </div>
 
@@ -104,16 +114,6 @@
     </ul>
   </section>
   {% endif %}
-
-  <section id="liste">
-    <h2 class="sezione-titolo">Liste</h2>
-    <div class="liste-chip">
-    {% for l in liste %}
-      <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="lista"><input type="hidden" name="lista" value="{{ l.id }}">
-        <button class="interruttore{{ ' acceso' if l.dentro }}" aria-pressed="{{ 'true' if l.dentro else 'false' }}">{{ '✓ ' if l.dentro else '+ ' }}{{ l.nome }}</button></form>
-    {% endfor %}
-    </div>
-  </section>
 
   {% if eventi %}
   <section>

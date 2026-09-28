@@ -455,7 +455,8 @@ def scheda(tipo, tmdb_id):
     tutte_viste = bool(uscite) and all(
         riep[s["numero"]]["vista"] or (riep[s["numero"]]["noti"] and riep[s["numero"]]["usciti"] and not riep[s["numero"]]["da_vedere"])
         for s in uscite)
-    return render_template("scheda.html", t=t, m=m, riep=riep, tutte_viste=tutte_viste, episodi=episodi, stagioni=stagioni, liste=liste,
+    nascosto = bool(c().execute("SELECT 1 FROM nascosti WHERE titolo_id=?", (tid,)).fetchone())
+    return render_template("scheda.html", t=t, m=m, nascosto=nascosto, riep=riep, tutte_viste=tutte_viste, episodi=episodi, stagioni=stagioni, liste=liste,
                            disp=disponibilita(tid), eventi=eventi, abbonato=abbonato, o=oggi().isoformat())
 
 
@@ -469,8 +470,12 @@ def scheda_azione(tipo, tmdb_id):
     az = request.form.get("azione", "")
     ancora = ""
     if az in ("mi_piace", "visto", "avvisi"):
+        nuovo = mio(tid) is None
         m = mio(tid, crea=True)
-        c().execute(f"UPDATE miei SET {az}=? WHERE titolo_id=?", (0 if m[az] else 1, tid))
+        # un titolo appena diventato mio nasce con gli avvisi accesi: la pagina li
+        # mostrava spenti (non era mio), e invertirli li avrebbe spenti davvero
+        acceso = 1 if az == "avvisi" and nuovo else (0 if m[az] else 1)
+        c().execute(f"UPDATE miei SET {az}=? WHERE titolo_id=?", (acceso, tid))
     elif az == "stagione":
         n = request.form.get("n", type=int)
         m = mio(tid, crea=True)
@@ -528,9 +533,17 @@ def scheda_azione(tipo, tmdb_id):
     elif az == "rimuovi":
         c().execute("DELETE FROM lista_titoli WHERE titolo_id=?", (tid,))
         c().execute("DELETE FROM miei WHERE titolo_id=?", (tid,))
+    elif az == "nascondi":
+        if mio(tid):
+            abort(400)          # un mio titolo si toglie con «rimuovi», non si nasconde
+        if c().execute("DELETE FROM nascosti WHERE titolo_id=?", (tid,)).rowcount == 0:
+            c().execute("INSERT INTO nascosti VALUES (?,?)", (tid, oggi().isoformat()))
+            c().execute("DELETE FROM consigliati WHERE titolo_id=?", (tid,))
     else:
         abort(400)
-    if az != "rimuovi":
+    if az not in ("rimuovi", "nascondi"):
+        # qualunque scelta che lo rende mio vince su un «non mi interessa» di prima
+        c().execute("DELETE FROM nascosti WHERE titolo_id=?", (tid,))
         if az == "lista":
             c().execute("UPDATE miei SET tolto_auto=NULL WHERE titolo_id=?", (tid,))   # scelta a mano: vince lei
         else:
@@ -556,6 +569,7 @@ def consigliati_azione():
     elif az == "aggiungi":
         lid = int(db.meta(c(), "lista_da_vedere") or 0)
         mio(tid, crea=True)
+        c().execute("DELETE FROM nascosti WHERE titolo_id=?", (tid,))
         if lid:
             c().execute("INSERT OR IGNORE INTO lista_titoli VALUES (?,?,?)", (lid, tid, oggi().isoformat()))
         c().commit()
