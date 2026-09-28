@@ -8,7 +8,7 @@
     <h1>{{ s.nome }}</h1>
     <p>
       {% if x %}<span class="etichetta v-{{ x.verdetto }}">{{ mm.ETICHETTE[x.verdetto] }}</span>{% endif %}
-      {% if x and x.attivo %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta">non abbonato</span>{% endif %}
+      {% if x and x.attivo %}<span class="etichetta abbonato">abbonato</span>{% elif x and x.pausa %}<span class="etichetta v-aspetta">in pausa fino al {{ x.pausa|gm }}</span>{% else %}<span class="etichetta">non abbonato</span>{% endif %}
       {% if not s.seguito %}<span class="etichetta">non seguito</span>{% endif %}
     </p>
   </div>

@@ -22,6 +22,12 @@ GIORNI_RINNOVO = 3         # avviso prima di un rinnovo
 GIORNI_CRONOLOGIA = 30     # avviso prima che un servizio cancelli la cronologia
 
 
+def in_pausa(s, oggi):
+    """In pausa: attivo sulla carta, ma non si usa e non costa fino a `pausa_fino`,
+    quando riparte da solo e addebita."""
+    return bool(s["stato"] == "attivo" and s["pausa_fino"] and data(s["pausa_fino"]) > oggi)
+
+
 def iso(d):
     return d.isoformat() if d else None
 
@@ -346,7 +352,8 @@ def consigli(c, oggi):
         pronti = [x for x in voci if x["pronte"]]
         attese = sorted([(f, x) for x in voci for _, f in x["in_corso"] if f] +
                         [(u, x) for x in voci for _, u in x["in_arrivo"]], key=lambda y: y[0])
-        attivo = s["stato"] == "attivo" or (s["stato"] == "disdetto" and s["fine"] and data(s["fine"]) >= oggi)
+        pausa = in_pausa(s, oggi)
+        attivo = (s["stato"] == "attivo" and not pausa) or (s["stato"] == "disdetto" and s["fine"] and data(s["fine"]) >= oggi)
         if pronti:
             n = len(pronti)
             verdetto = "sfrutta" if attivo else "attiva"
@@ -356,6 +363,9 @@ def consigli(c, oggi):
             prima = attese[0][0]
             verdetto = "aspetta"
             testo = f"Aspetta fino al {prima.strftime('%d/%m/%Y')}: {attese[0][1]['t']['titolo']}"
+        elif pausa:
+            verdetto = "niente"
+            testo = f"In pausa fino al {gm(s['pausa_fino'])}: poi riparte da solo"
         elif attivo and s["stato"] == "attivo":
             verdetto = "disdici"
             testo = "Niente di nuovo nelle tue liste" + (f": puoi disdire prima del {gm(s['rinnovo'])}" if s["rinnovo"] else "")
@@ -364,6 +374,7 @@ def consigli(c, oggi):
             testo = "Niente di nuovo nelle tue liste"
         rischio = cronologia_a_rischio(s)
         out.append(dict(s=s, verdetto=verdetto, testo=testo, pronti=pronti, attese=attese, attivo=attivo,
+                        pausa=s["pausa_fino"] if pausa else None,
                         rischio=rischio, rischio_vicino=bool(rischio and rischio - dt.timedelta(days=GIORNI_CRONOLOGIA) <= oggi)))
     return out
 
@@ -374,6 +385,20 @@ def scadenze(c, oggi):
     registra gli eventi di rinnovo, fine e cronologia. Ritorna i testi nuovi."""
     nuovi = []
     for s in c.execute("SELECT * FROM servizi").fetchall():
+        if s["stato"] == "attivo" and s["pausa_fino"] and data(s["pausa_fino"]) <= oggi:
+            # la pausa e' finita: il servizio e' ripartito da solo e ha addebitato
+            c.execute("UPDATE servizi SET pausa_fino=NULL, rinnovo=COALESCE(rinnovo, pausa_fino) WHERE id=?", (s["id"],))
+            t = f"{s['nome']}: finita la pausa, l'abbonamento è ripartito"
+            if evento(c, f"pausa-finita:{s['id']}:{s['pausa_fino']}", "rinnovo", t, oggi, servizio_id=s["id"]):
+                nuovi.append(t)
+            s = c.execute("SELECT * FROM servizi WHERE id=?", (s["id"],)).fetchone()
+        if s["stato"] == "attivo" and s["pausa_fino"]:
+            f = data(s["pausa_fino"])
+            if (f - oggi).days <= GIORNI_RINNOVO:
+                t = f"{s['nome']}: la pausa finisce il {f.strftime('%d/%m/%Y')} e riparte da solo. Se non ti serve, prolungala o disdici"
+                if evento(c, f"pausa:{s['id']}:{iso(f)}", "rinnovo", t, oggi, servizio_id=s["id"]):
+                    nuovi.append(t)
+            continue
         if s["stato"] == "attivo" and s["rinnovo"]:
             r = data(s["rinnovo"])
             while r < oggi:
@@ -533,6 +558,8 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
            for i in range(periodi)]
     pagato = {}                                    # servizio -> ultimo giorno gia' pagato
     for sid, s in serv.items():
+        if s["stato"] == "attivo" and in_pausa(s, oggi):
+            continue                               # in pausa: non si usa finche' non riparte o si riprende
         if s["stato"] == "attivo":
             pagato[sid] = data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else per[0][1]
         elif s["stato"] == "disdetto" and s["fine"] and data(s["fine"]) >= oggi:
@@ -603,8 +630,11 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
             continua = sid in acceso_prima
             aspettato = max(i - v["dal"] for v in mie) >= ATTESA_MAX
             if continua or aspettato or h >= disponibili * .8 or not unire or i == periodi - 1:
-                gia = continua or (s["stato"] == "attivo" and i == 0)
-                assegna(sid, "rinnova" if gia else "attiva")
+                if in_pausa(s, oggi):
+                    assegna(sid, "riprendi" if ini < data(s["pausa_fino"]) else "rinnova")
+                else:
+                    gia = continua or (s["stato"] == "attivo" and i == 0)
+                    assegna(sid, "rinnova" if gia else "attiva")
             else:
                 u = unire[0]
                 rinvii.append(dict(s=s, motivo=f"aspetta: verso il {breve(u['pronto'])} è pronto anche «{u['t']['titolo']}» ({u['cosa'].lower()})"))
@@ -619,6 +649,27 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
     for sid, s in serv.items():
         usi = [p["i"] for p in out for x in p["voci"] if x["s"]["id"] == sid and x["titoli"]]
         pagati = [p["i"] for p in out for x in p["voci"] if x["s"]["id"] == sid and x["azione"] != "pagato"]
+        if in_pausa(s, oggi):
+            pf = data(s["pausa_fino"])
+            prima = [i for i in pagati if per[i][0] < pf]
+            subito = [i for i in pagati if per[i][1] >= pf and i <= periodo_di(pf) + 1]
+            dopo = [i for i in pagati if per[i][1] >= pf]
+            n = s["pausa_proroghe"] or 0
+            if prima:
+                q = max(per[prima[0]][0], oggi)
+                azioni.append(dict(s=s, tipo="riprendi", quando=q, pausa=pf,
+                                   testo="Riprendilo dalla pausa adesso" if q == oggi else f"Riprendilo dalla pausa verso il {breve(q)}"))
+            elif subito:
+                azioni.append(dict(s=s, tipo="tieni", quando=pf, pausa=pf, testo=f"In pausa fino al {breve(pf)}: poi riparte, e ti serve"))
+            elif n:
+                azioni.append(dict(s=s, tipo="proroga", quando=pf, pausa=pf,
+                                   testo=f"La pausa finisce il {breve(pf)}: prolungala (ne rest{'a' if n == 1 else 'ano'} {n})"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            else:
+                azioni.append(dict(s=s, tipo="disdici", quando=pf, pausa=pf,
+                                   testo=f"La pausa finisce il {breve(pf)}: disdici prima, o riparte e addebita"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            continue
         if s["stato"] == "attivo" and s["ciclo"] == "mese":
             r = data(s["rinnovo"]) if s["rinnovo"] else None
             k = next((i for i in range(periodi) if not coperto(sid, i)), None)
@@ -642,14 +693,14 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
                                testo="Attivalo adesso" if j == 0 else f"Attivalo verso il {breve(per[j][0])}"))
         elif not usi:
             azioni.append(dict(s=s, tipo="niente", quando=None, testo="Non ti serve nei prossimi sei mesi"))
-    ordine = {"disdici": 0, "attiva": 1, "tieni": 2, "pagato": 3, "niente": 4}
+    ordine = {"disdici": 0, "proroga": 0, "riprendi": 1, "attiva": 1, "tieni": 2, "pagato": 3, "niente": 4}
     azioni.sort(key=lambda a: (ordine[a["tipo"]], a["quando"] or dt.date.max))
 
     oltre = list(resto)
     spesa = round(sum(p["costo"] for p in out), 2)
     # confronto: tenere attivi, per tutti i periodi, i mensili attivi oggi
     oggi_attivi = round(sum((s["prezzo"] or medio) * periodi for s in serv.values()
-                            if s["stato"] == "attivo" and s["ciclo"] == "mese"), 2)
+                            if s["stato"] == "attivo" and s["ciclo"] == "mese" and not in_pausa(s, oggi)), 2)
     tutti = round(sum((s["prezzo"] or medio) * (periodi if s["ciclo"] == "mese" else 0) for s in serv.values()), 2)
     return dict(periodi=out, azioni=azioni, oltre=oltre, esclusi=esclusi, spesa=spesa, oggi_attivi=oggi_attivi,
                 tutti=tutti, stimati=[s["nome"] for s in serv.values() if not s["prezzo"]], medio=medio, ore_mese=ore_mese)
@@ -680,8 +731,27 @@ def promemoria(c, oggi, p):
                     t.append(y["t"]["titolo"])
         return t
 
+    azioni = {a["s"]["id"]: a for a in p["azioni"]}
     for sid, s in serv.items():
         mie = pagati.get(sid, {})
+        if in_pausa(s, oggi):
+            a, pf = azioni[sid], data(s["pausa_fino"])
+            if a["tipo"] == "riprendi":
+                ev.append(dict(uid=f"riprendi-{sid}", giorno=a["quando"], avviso=0, titolo=f"Riprendi {s['nome']} dalla pausa",
+                               testo=f"Da guardare: {', '.join(titoli(mie.values()))}. Poi segnalo in Palinsesto: «L'ho ripreso oggi»."))
+            elif a["tipo"] == "proroga":
+                ev.append(dict(uid=f"pausa-{sid}", giorno=max(pf - dt.timedelta(days=1), oggi), avviso=2,
+                               titolo=f"{s['nome']}: prolunga la pausa",
+                               testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')} e poi riparte e addebita. Prolungala "
+                                     f"(proroghe rimaste: {s['pausa_proroghe']}) o disdici, poi segnalo in Palinsesto."))
+            elif a["tipo"] == "disdici":
+                ev.append(dict(uid=f"disdici-{sid}", giorno=max(pf - dt.timedelta(days=1), oggi), avviso=2,
+                               titolo=f"Disdici {s['nome']}",
+                               testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')}: se non disdici, riparte e addebita."))
+            else:
+                ev.append(dict(uid=f"riparte-{sid}", giorno=pf, avviso=0, titolo=f"{s['nome']} riparte dalla pausa",
+                               testo=f"Finisce la pausa e riparte l'abbonamento: ti serve per {', '.join(titoli(mie.values()))}."))
+            continue
         if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"]:
             r = data(s["rinnovo"])
             # periodi pagati consecutivi subito dopo la copertura di oggi: tanti rinnovi quanti servono

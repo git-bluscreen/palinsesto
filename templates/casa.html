@@ -22,7 +22,7 @@
       <span class="consiglio-testo">
         <b>{{ x.s.nome }}</b>
         <span class="etichetta v-{{ x.verdetto }}">{{ mm.ETICHETTE[x.verdetto] }}</span>
-        {% if x.attivo %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta">non abbonato</span>{% endif %}
+        {% if x.attivo %}<span class="etichetta abbonato">abbonato</span>{% elif x.pausa %}<span class="etichetta v-aspetta">in pausa fino al {{ x.pausa|gm }}</span>{% else %}<span class="etichetta">non abbonato</span>{% endif %}
         <small>{{ x.testo }}</small>
         {% if x.pronti %}<small class="titoli-consiglio">{% for y in x.pronti[:3] %}{{ y.t.titolo }}{{ ', ' if not loop.last }}{% endfor %}{% if x.pronti|length > 3 %} e altri {{ x.pronti|length - 3 }}{% endif %}</small>{% endif %}
         {% if x.rischio_vicino %}<small class="allarme">Cronologia a rischio dal {{ x.rischio|gm }}</small>{% endif %}

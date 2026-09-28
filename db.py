@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS servizi (
   fine TEXT,             -- ultimo giorno utile, se disdetto
   canale TEXT,           -- diretto, Prime Video Channels, TIM...
   conserva_mesi INTEGER, -- mesi di cronologia conservata dopo la fine: da verificare, mai inventati
-  note TEXT
+  note TEXT,
+  pausa_fino TEXT,       -- in pausa fino a (stato resta 'attivo': quel giorno riparte e addebita)
+  pausa_proroghe INTEGER -- proroghe della pausa ancora possibili, se il servizio le concede
 );
 
 CREATE TABLE IF NOT EXISTS provider (
@@ -203,6 +205,11 @@ def migra(c):
         c.commit()
     if "tolto_auto" not in colonne:
         c.execute("ALTER TABLE miei ADD COLUMN tolto_auto TEXT")
+        c.commit()
+    serv = {r[1] for r in c.execute("PRAGMA table_info(servizi)")}
+    if "pausa_fino" not in serv:
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_fino TEXT")
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_proroghe INTEGER")
         c.commit()
     if not meta(c, "lista_da_vedere"):
         r = c.execute("SELECT id FROM liste WHERE nome='Da vedere'").fetchone() or \

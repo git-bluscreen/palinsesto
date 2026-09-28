@@ -323,5 +323,9 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 .azioni-piano .etichetta { margin-left: .25rem; }
 .calendario-stato { margin: 0 0 .5rem; }
 .azioni-piano li { display: grid; gap: .3rem; }
-.azioni-piano form.fatto { margin: 0 0 .2rem 3.4rem; }
-.azioni-piano form.fatto .interruttore.piccolo { width: auto; }
+.azioni-piano .interruttore.piccolo { width: auto; }
+.azioni-piano .fatto { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; margin: 0 0 .2rem 3.4rem; }
+.azioni-piano details.pausa > summary { list-style: none; display: inline-flex; align-items: center; cursor: pointer; }
+.azioni-piano details.pausa > summary::-webkit-details-marker { display: none; }
+.azioni-piano details.pausa[open] { flex-basis: 100%; }
+.modulo-pausa { display: grid; gap: .5rem; margin-top: .5rem; max-width: 320px; }

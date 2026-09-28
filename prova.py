@@ -371,5 +371,25 @@ az = {a["s"]["nome"]: (a["tipo"], a["testo"]) for a in logica.piano(pc, D, 25, a
 atteso("disdetto ma ancora pagato: lo dice, non «non ti serve»", [str(az["Disdetto in offerta"])], "('pagato', 'Già disdetto, attivo fino al 30 dic')")
 atteso("...e nessun promemoria per lui", [e["uid"] for e in logica.promemoria(pc, D, logica.piano(pc, D, 25, ancora=D)) if e["uid"].endswith("-9") or "-9-" in e["uid"]])
 
+# pausa: non costa e non si usa fino al giorno in cui riparte da solo
+pc.execute("INSERT INTO servizi (id, nome, stato, prezzo, ciclo, rinnovo, pausa_fino, pausa_proroghe) VALUES (10, 'In pausa', 'attivo', 7.99, 'mese', ?, ?, 1)", (iso(50), iso(50)))
+pc.execute("INSERT INTO provider (id, nome, servizio_id) VALUES (10, 'In pausa', 10)"); pc.commit()
+def pausa_az():
+    pp = logica.piano(pc, D, 25, ancora=D)
+    return pp, next(a for a in pp["azioni"] if a["s"]["nome"] == "In pausa"), {e["uid"]: e for e in logica.promemoria(pc, D, pp)}
+pp, a, ev = pausa_az()
+atteso("pausa senza niente da vedere: prolungala (ne resta 1)", [f"{a['tipo']} {a['testo']}"], "proroga La pausa finisce il 20 nov: prolungala (ne resta 1)")
+atteso("...promemoria il giorno prima della fine, avviso 2 giorni prima", [f"{ev['pausa-10']['giorno']} {ev['pausa-10']['avviso']} {ev['pausa-10']['titolo']}"], f"{D + dt.timedelta(49)} 2 In pausa: prolunga la pausa")
+atteso("...non conta nella spesa di oggi", [f"{pp['oggi_attivi']:.2f}"], "59.94")
+pc.execute("UPDATE servizi SET pausa_proroghe=0 WHERE id=10"); pc.commit()
+pp, a, ev = pausa_az()
+atteso("pausa senza proroghe: disdici prima che riparta", [f"{a['tipo']} {ev['disdici-10']['titolo']}"], "disdici Disdici In pausa")
+serie(110, "Esce durante la pausa", [10], [iso(-20)] * 6)
+pp, a, ev = pausa_az()
+atteso("esce qualcosa durante la pausa: riprendilo, con promemoria", [f"{a['tipo']} {a['testo']} {ev['riprendi-10']['titolo']}"], "riprendi Riprendilo dalla pausa adesso Riprendi In pausa dalla pausa")
+atteso("...nel piano il periodo dice «riprendi», non «attiva»", [str([x["azione"] for x in pp["periodi"][0]["voci"] if x["s"]["nome"] == "In pausa"])], "['riprendi']")
+atteso("il giorno in cui finisce: la pausa si chiude da sola, con avviso", logica.scadenze(pc, D + dt.timedelta(50)), "In pausa: finita la pausa, l'abbonamento è ripartito", esatti=False)
+atteso("...e torna un abbonamento attivo normale", [str(pc.execute("SELECT pausa_fino, rinnovo FROM servizi WHERE id=10").fetchone()[:])], f"(None, '{iso(50)}')")
+
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

@@ -313,7 +313,7 @@ def disponibilita(tid):
     """[(servizio o None, provider, offerta, dal)] adesso, servizi seguiti prima."""
     return c().execute("""
         SELECT d.offerta, d.dal, p.id AS pid, p.nome AS provider, p.logo AS plogo,
-               s.id AS sid, s.nome AS servizio, s.stato, s.fine, s.seguito
+               s.id AS sid, s.nome AS servizio, s.stato, s.fine, s.seguito, s.pausa_fino
         FROM disponibilita d JOIN provider p ON p.id=d.provider_id
         LEFT JOIN servizi s ON s.id=p.servizio_id
         WHERE d.titolo_id=? AND d.fino IS NULL
@@ -323,7 +323,7 @@ def disponibilita(tid):
 
 
 def abbonato(s):
-    return s["stato"] == "attivo" or (s["stato"] == "disdetto" and s["fine"] and logica.data(s["fine"]) >= oggi())
+    return (s["stato"] == "attivo" and not logica.in_pausa(s, oggi())) or (s["stato"] == "disdetto" and s["fine"] and logica.data(s["fine"]) >= oggi())
 
 
 def schede_elenco(righe):
@@ -687,9 +687,10 @@ def abbonamenti():
     servizi = c().execute("SELECT * FROM servizi ORDER BY seguito DESC, ordine, nome").fetchall()
     mensile = 0.0
     for s in servizi:
-        if s["stato"] == "attivo" and s["prezzo"]:
+        if s["stato"] == "attivo" and s["prezzo"] and not logica.in_pausa(s, o):
             mensile += s["prezzo"] / (12 if s["ciclo"] == "anno" else 1)
-    return render_template("abbonamenti.html", servizi=servizi, consigli=consigli, mensile=mensile, o=o)
+    return render_template("abbonamenti.html", servizi=servizi, consigli=consigli, mensile=mensile, o=o,
+                           in_pausa=lambda s: logica.in_pausa(s, o))
 
 
 @app.route("/piano", methods=["GET", "POST"])
@@ -710,7 +711,8 @@ def piano():
     ore = int(db.meta(c(), "ore_mese") or logica.ORE_MESE)
     p = logica.piano(c(), o, ore, ancora=logica.ancora_piano(c(), o))
     cal = json.loads(db.meta(c(), "calendario_esito") or "null") if calendario.conf() else None
-    return render_template("piano.html", p=p, breve=logica.breve, o=o, cal=cal,
+    tre_mesi = lambda d: logica.piu_mesi(logica.data(d) if isinstance(d, str) else d, 3).isoformat()
+    return render_template("piano.html", p=p, breve=logica.breve, o=o, cal=cal, tre_mesi=tre_mesi,
                            cal_configurato=calendario.conf() is not None)
 
 
@@ -730,23 +732,32 @@ def abbonamento_salva(sid):
         abort(404)
     stato = request.form.get("stato")
     ciclo = request.form.get("ciclo")
-    if stato not in ("attivo", "disdetto", "mai") or ciclo not in ("mese", "anno"):
+    if stato not in ("attivo", "disdetto", "mai", "pausa") or ciclo not in ("mese", "anno"):
         abort(400)
+    pausa_fino = proroghe = None
+    if stato == "pausa":
+        # la pausa e' un «attivo» che non costa fino a quel giorno, poi riparte e addebita
+        pausa_fino = campo_data("pausa_fino")
+        if not pausa_fino or pausa_fino <= oggi().isoformat():
+            abort(400)
+        proroghe = request.form.get("pausa_proroghe", type=int)
+        proroghe = proroghe if proroghe and 0 < proroghe < 10 else None
+        stato = "attivo"
     prezzo = request.form.get("prezzo", "").replace(",", ".").strip()
     try:
         prezzo = round(float(prezzo), 2) if prezzo else None
     except ValueError:
         abort(400)
-    fine = campo_data("fine")
+    fine = campo_data("fine") if stato == "disdetto" else None
     if stato == "disdetto" and not fine and campo_data("rinnovo"):
         # disdetto senza data: resta attivo fino al giorno prima del rinnovo che non avverra'
         fine = (logica.data(campo_data("rinnovo")) - dt.timedelta(days=1)).isoformat()
     conserva = request.form.get("conserva_mesi", type=int)
     pulito = lambda k, n: re.sub(r"[\x00-\x1f\x7f]", " ", request.form.get(k, "")).strip()[:n] or None
-    c().execute("""UPDATE servizi SET stato=?, prezzo=?, ciclo=?, rinnovo=?, fine=?, canale=?, conserva_mesi=?, note=?
-                   WHERE id=?""",
-                (stato, prezzo, ciclo, campo_data("rinnovo"), fine, pulito("canale", 60),
-                 conserva if conserva and 0 < conserva < 120 else None, pulito("note", 300), sid))
+    c().execute("""UPDATE servizi SET stato=?, prezzo=?, ciclo=?, rinnovo=?, fine=?, canale=?, conserva_mesi=?, note=?,
+                   pausa_fino=?, pausa_proroghe=? WHERE id=?""",
+                (stato, prezzo, ciclo, pausa_fino or campo_data("rinnovo"), fine, pulito("canale", 60),
+                 conserva if conserva and 0 < conserva < 120 else None, pulito("note", 300), pausa_fino, proroghe, sid))
     c().commit()
     log(f"abbonamento {sid}: stato {stato} da {session.get('nome')}")
     return redirect(url_for("abbonamenti") + f"#s{sid}")
@@ -760,9 +771,26 @@ def abbonamento_fatto(sid):
     if not s:
         abort(404)
     az, o = request.form.get("azione"), oggi()
+    pausa = logica.in_pausa(s, o)
+    fino = campo_data("fino")
     if az == "disdetto" and s["stato"] == "attivo":
-        fine = logica.data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else o
-        c().execute("UPDATE servizi SET stato='disdetto', fine=? WHERE id=?", (max(fine, o).isoformat(), sid))
+        # disdetto durante la pausa: finisce subito (in pausa non si usa comunque)
+        fine = o if pausa else logica.data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else o
+        c().execute("UPDATE servizi SET stato='disdetto', fine=?, pausa_fino=NULL WHERE id=?", (max(fine, o).isoformat(), sid))
+    elif az == "pausa" and s["stato"] == "attivo" and not pausa:
+        if not fino or fino <= o.isoformat():
+            abort(400)
+        n = request.form.get("proroghe", type=int)
+        c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=? WHERE id=?",
+                    (fino, fino, n if n and 0 < n < 10 else None, sid))
+    elif az == "prolungata" and pausa:
+        if not fino or fino <= s["pausa_fino"]:
+            abort(400)
+        c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=MAX(COALESCE(pausa_proroghe, 0) - 1, 0) WHERE id=?",
+                    (fino, fino, sid))
+    elif az == "ripreso" and pausa:
+        rinnovo = logica.piu_mesi(o, 12 if s["ciclo"] == "anno" else 1)
+        c().execute("UPDATE servizi SET pausa_fino=NULL, rinnovo=? WHERE id=?", (rinnovo.isoformat(), sid))
     elif az == "attivato" and s["stato"] != "attivo":
         rinnovo = logica.piu_mesi(o, 12 if s["ciclo"] == "anno" else 1)
         c().execute("UPDATE servizi SET stato='attivo', rinnovo=?, fine=NULL WHERE id=?", (rinnovo.isoformat(), sid))

@@ -2,8 +2,10 @@
 {% import "_macro.html" as mm %}
 {% block titolo %}Piano · Palinsesto{% endblock %}
 {% set AZIONI = {'disdici': ('Da disdire', 'v-disdici'), 'attiva': ('Da attivare', 'v-attiva'), 'tieni': ('Tienilo', 'v-sfrutta'),
+                 'proroga': ('Prolunga la pausa', 'v-aspetta'), 'riprendi': ('Da riprendere', 'v-attiva'),
                  'pagato': ('Già pagato', 'abbonato'), 'niente': ('Non serve', '')} %}
-{% set VOCI = {'pagato': ('già pagato', 'abbonato'), 'attiva': ('da attivare', 'v-attiva'), 'rinnova': ('da rinnovare', 'v-aspetta')} %}
+{% set VOCI = {'pagato': ('già pagato', 'abbonato'), 'attiva': ('da attivare', 'v-attiva'), 'rinnova': ('da rinnovare', 'v-aspetta'),
+               'riprendi': ('da riprendere dalla pausa', 'v-attiva')} %}
 {% block corpo %}
 <h1 class="pagina-titolo">Piano dei prossimi mesi</h1>
 <p class="riepilogo">In sei mesi spendi <b>{{ p.spesa|euro }}</b> col piano{% if p.oggi_attivi > p.spesa %}, invece di {{ p.oggi_attivi|euro }} tenendo gli abbonamenti mensili di oggi: risparmi <b>{{ (p.oggi_attivi - p.spesa)|euro }}</b>{% endif %}.</p>
@@ -35,12 +37,26 @@
       <span><b>{{ a.s.nome }}</b> <span class="etichetta {{ AZIONI[a.tipo][1] }}">{{ AZIONI[a.tipo][0] }}</span>
         <small>{{ a.testo }}</small></span>
     </a>
-    {% if a.tipo in ('disdici', 'attiva') %}
-    <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="fatto">
+    {% if a.tipo in ('disdici', 'attiva', 'proroga', 'riprendi') %}
+    <div class="fatto">
+    <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="in-riga">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="/piano">
-      {% if a.tipo == 'disdici' %}<button class="interruttore piccolo" name="azione" value="disdetto">L'ho disdetto</button>
+      {% if a.tipo in ('disdici', 'proroga') %}<button class="interruttore piccolo" name="azione" value="disdetto">L'ho disdetto</button>
+      {% elif a.tipo == 'riprendi' %}<button class="interruttore piccolo" name="azione" value="ripreso">L'ho ripreso oggi</button>
       {% else %}<button class="interruttore piccolo" name="azione" value="attivato">L'ho attivato oggi</button>{% endif %}
     </form>
+    {% if (a.tipo == 'disdici' and not a.pausa) or a.tipo == 'proroga' %}
+    <details class="pausa">
+      <summary class="interruttore piccolo">{{ "L'ho messo in pausa" if a.tipo == 'disdici' else "Ho prolungato la pausa" }}</summary>
+      <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="modulo-pausa">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="/piano">
+        <label>In pausa fino al<input type="date" name="fino" required value="{{ tre_mesi(a.pausa or a.s.rinnovo or o) }}"></label>
+        {% if a.tipo == 'disdici' %}<label>Proroghe possibili dopo questa<input type="number" name="proroghe" min="0" max="9" value="{{ a.s.pausa_proroghe or '' }}" placeholder="es. 1"></label>{% endif %}
+        <button class="primario" name="azione" value="{{ 'pausa' if a.tipo == 'disdici' else 'prolungata' }}">Salva</button>
+      </form>
+    </details>
+    {% endif %}
+    </div>
     {% endif %}
     </li>
   {% endfor %}
