@@ -737,15 +737,45 @@ def abbonamento_salva(sid):
         prezzo = round(float(prezzo), 2) if prezzo else None
     except ValueError:
         abort(400)
+    fine = campo_data("fine")
+    if stato == "disdetto" and not fine and campo_data("rinnovo"):
+        # disdetto senza data: resta attivo fino al giorno prima del rinnovo che non avverra'
+        fine = (logica.data(campo_data("rinnovo")) - dt.timedelta(days=1)).isoformat()
     conserva = request.form.get("conserva_mesi", type=int)
     pulito = lambda k, n: re.sub(r"[\x00-\x1f\x7f]", " ", request.form.get(k, "")).strip()[:n] or None
     c().execute("""UPDATE servizi SET stato=?, prezzo=?, ciclo=?, rinnovo=?, fine=?, canale=?, conserva_mesi=?, note=?
                    WHERE id=?""",
-                (stato, prezzo, ciclo, campo_data("rinnovo"), campo_data("fine"), pulito("canale", 60),
+                (stato, prezzo, ciclo, campo_data("rinnovo"), fine, pulito("canale", 60),
                  conserva if conserva and 0 < conserva < 120 else None, pulito("note", 300), sid))
     c().commit()
     log(f"abbonamento {sid}: stato {stato} da {session.get('nome')}")
     return redirect(url_for("abbonamenti") + f"#s{sid}")
+
+
+@app.route("/abbonamenti/<int:sid>/fatto", methods=["POST"])
+def abbonamento_fatto(sid):
+    """Un tocco dal piano: «l'ho disdetto» / «l'ho attivato oggi». Poi il piano e
+    il calendario si ricalcolano (il «Disdici» del calendario sparisce da solo)."""
+    s = c().execute("SELECT * FROM servizi WHERE id=?", (sid,)).fetchone()
+    if not s:
+        abort(404)
+    az, o = request.form.get("azione"), oggi()
+    if az == "disdetto" and s["stato"] == "attivo":
+        fine = logica.data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else o
+        c().execute("UPDATE servizi SET stato='disdetto', fine=? WHERE id=?", (max(fine, o).isoformat(), sid))
+    elif az == "attivato" and s["stato"] != "attivo":
+        rinnovo = logica.piu_mesi(o, 12 if s["ciclo"] == "anno" else 1)
+        c().execute("UPDATE servizi SET stato='attivo', rinnovo=?, fine=NULL WHERE id=?", (rinnovo.isoformat(), sid))
+    else:
+        abort(400)
+    c().commit()
+    log(f"abbonamento {sid}: {az} da {session.get('nome')}")
+    try:
+        calendario.aggiorna(c(), o)
+    except Exception as e:
+        log(f"calendario: {e}")
+    torna = request.form.get("torna", "")
+    return redirect(torna if torna.startswith("/") and not torna.startswith("//") else url_for("piano"))
 
 
 @app.route("/impostazioni")

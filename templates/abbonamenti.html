@@ -45,7 +45,7 @@
     <label>Prezzo (€)<input name="prezzo" inputmode="decimal" value="{{ ('%.2f'|format(s.prezzo)).replace('.', ',') if s.prezzo }}" placeholder="es. 9,99"></label>
     <label>Ciclo<select name="ciclo"><option value="mese" {% if s.ciclo == 'mese' %}selected{% endif %}>Mensile</option><option value="anno" {% if s.ciclo == 'anno' %}selected{% endif %}>Annuale</option></select></label>
     <label>Prossimo rinnovo<input type="date" name="rinnovo" value="{{ s.rinnovo or '' }}"></label>
-    <label>Fine (se disdetto)<input type="date" name="fine" value="{{ s.fine or '' }}"></label>
+    <label>Fine (se disdetto)<input type="date" name="fine" value="{{ s.fine or '' }}"><small>Vuota: il giorno prima del rinnovo.</small></label>
     <label>Tramite<input name="canale" value="{{ s.canale or '' }}" placeholder="diretto, Prime Video Channels, TIM…" maxlength="60"></label>
     <label>Cronologia conservata (mesi)<input name="conserva_mesi" type="number" min="1" max="119" value="{{ s.conserva_mesi or '' }}" placeholder="da verificare"></label>
     <label class="largo">Note<input name="note" value="{{ s.note or '' }}" maxlength="300"></label>

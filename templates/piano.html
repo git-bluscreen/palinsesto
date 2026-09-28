@@ -34,7 +34,15 @@
       {{ mm.logo_servizio(a.s) }}
       <span><b>{{ a.s.nome }}</b> <span class="etichetta {{ AZIONI[a.tipo][1] }}">{{ AZIONI[a.tipo][0] }}</span>
         <small>{{ a.testo }}</small></span>
-    </a></li>
+    </a>
+    {% if a.tipo in ('disdici', 'attiva') %}
+    <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="fatto">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="/piano">
+      {% if a.tipo == 'disdici' %}<button class="interruttore piccolo" name="azione" value="disdetto">L'ho disdetto</button>
+      {% else %}<button class="interruttore piccolo" name="azione" value="attivato">L'ho attivato oggi</button>{% endif %}
+    </form>
+    {% endif %}
+    </li>
   {% endfor %}
   </ul>
 </section>

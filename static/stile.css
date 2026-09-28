@@ -322,3 +322,6 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 .rimando b { color: var(--accento); }
 .azioni-piano .etichetta { margin-left: .25rem; }
 .calendario-stato { margin: 0 0 .5rem; }
+.azioni-piano li { display: grid; gap: .3rem; }
+.azioni-piano form.fatto { margin: 0 0 .2rem 3.4rem; }
+.azioni-piano form.fatto .interruttore.piccolo { width: auto; }
