@@ -15,7 +15,7 @@ Cosa fa, in ordine:
 5. un solo messaggio ntfy con gli eventi nuovi da notificare.
 
 L'esito finisce nel journal (riga «giro concluso» o «giro FALLITO»): e' quella
-che un domani sorvegliera' il watchdog. Esce con 1 se piu' di meta' delle
+che un sistema di monitoraggio puo' sorvegliare. Esce con 1 se piu' di meta' delle
 schede non si e' potuta scaricare.
 """
 import argparse, datetime as dt, json, os, pathlib, shutil, sys, tempfile, time
@@ -24,7 +24,7 @@ import requests
 
 QUI = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(QUI))
-import calendario, db, logica, tmdb
+import calendario, config, db, logica, tmdb
 
 # Servizi predefiniti e i provider TMDB che ne fanno parte. Gli id sono quelli
 # verificati sull'elenco IT; le varianti (con pubblicita', canali) si
@@ -51,7 +51,7 @@ REGISTRO = os.environ.get("PALINSESTO_REGISTRO")   # giro lanciato dalla pagina:
 
 
 def log(msg):
-    print(msg, flush=True)          # journal (e Loki), da qualunque parte parta il giro
+    print(msg, flush=True)          # journal, da qualunque parte parta il giro
     if REGISTRO:
         try:
             with open(REGISTRO, "a") as f:
@@ -197,7 +197,7 @@ def notifica(c, novita, prova):
             break
         testo += "• " + t + "\n"
     cfg = conf_ntfy() or {}
-    pagina = cfg.get("pagina", "https://palinsesto.example.org")
+    pagina = cfg.get("pagina") or config.pagina()
     # con un solo titolo il tocco porta alla sua scheda, altrimenti alle novita'
     unico = {t for _, _, t in righe if t}
     click = f"{pagina}/t/{unico.pop().replace(':', '/')}" if len(unico) == 1 and not extra else f"{pagina}/novita"
@@ -222,8 +222,8 @@ def notifica(c, novita, prova):
 PROVE_RETE, PAUSA_RETE = 5, 150    # 5 tentativi a 2,5 minuti: ~10 minuti, dentro i 30 di systemd
 ERRORI_DI_FILA = 5
 # rete giu': l'unita' systemd lo accetta come uscita riuscita (SuccessExitStatus),
-# cosi' il controllo delle unita' fallite del watchdog non suona di notte; il
-# giro fallito lo racconta la riga «giro FALLITO», che legge il controllo 50
+# cosi' un monitoraggio delle unita' fallite non suona di notte per la rete giu';
+# il giro fallito lo racconta la riga «giro FALLITO», da sorvegliare nei log
 RETE_GIU = 75      # EX_TEMPFAIL
 
 
@@ -267,8 +267,8 @@ def main():
     c = db.apri(file)
 
     if o.recupero:
-        # il recupero non scrive «giro concluso» se non fa niente: per il watchdog
-        # conta la riga del giro vero, non questa
+        # il recupero non scrive «giro concluso» se non fa niente: per chi sorveglia
+        # i log conta la riga del giro vero, non questa
         fatto = db.meta(c, "ultimo_giro") or ""
         if fatto[:10] == oggi.isoformat():
             log(f"recupero: il giro di oggi e' gia' concluso ({fatto[11:16]}), niente da fare")

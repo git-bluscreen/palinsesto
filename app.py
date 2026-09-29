@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Palinsesto: film e serie sui servizi di streaming italiani, liste, avvisi
-e abbonamenti. https://palinsesto.example.org -> :45090 (dietro un reverse proxy).
+e abbonamenti. Pagina web su :45090, pensata dietro un reverse proxy.
 
-Accesso: un solo utente, password (scrypt) + codice TOTP, come il pannello
-del watchdog (da cui questo codice e' ripreso). Credenziali in
+Accesso: un solo utente, password (scrypt) + codice TOTP. Credenziali in
 ~/.config/palinsesto/utente.json, create con utente.py dal terminale.
-Le richieste sono accettate solo da NPM e da localhost: il firewall del
-container dovrebbe gia' garantirlo, questa e' la seconda serratura.
+Le richieste sono accettate solo da localhost, dai reverse proxy fidati e dalle
+reti ammesse (config.py): il firewall davanti alla macchina dovrebbe gia'
+garantirlo, questa e' la seconda serratura.
 Le copertine passano da /img (cache su disco): il telefono non parla mai con
 TMDB e la CSP resta 'self'.
 """
@@ -17,14 +17,14 @@ from flask import Flask, abort, g, redirect, render_template, request, send_file
 
 QUI = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(QUI))
-import calendario, db, logica, tmdb
+import calendario, config, db, logica, tmdb
 
 CONF        = tmdb.CONF
 UTENTE      = CONF / "utente.json"
 CACHE_IMG   = db.DATI / "img"
 PORTA       = int(os.environ.get("PALINSESTO_PORTA", 45090))
-NPM         = "192.0.2.10"
-AMMESSI     = {NPM, "127.0.0.1"}     # NPM e localhost (le mie prove passano da un tunnel ssh)
+PROXY       = config.proxy()          # reverse proxy fidati: di loro si legge X-Real-IP
+RETI        = config.reti_ammesse()   # localhost, i proxy e le reti «ammessi» di palinsesto.json
 PROVA       = os.environ.get("PALINSESTO_PROVA") == "1"   # solo collaudo: cookie senza Secure
 TENTATIVI   = 5
 BLOCCO_S    = 15 * 60
@@ -56,11 +56,11 @@ app.config.update(
 
 
 def log(msg):
-    print(msg, flush=True)      # stdout -> journal -> Loki
+    print(msg, flush=True)      # stdout -> journal
 
 
 def ip_cliente():
-    if request.remote_addr == NPM:
+    if request.remote_addr in PROXY:
         return request.headers.get("X-Real-IP", request.remote_addr)
     return request.remote_addr
 
@@ -78,7 +78,7 @@ def password_giusta(u, pw):
     return hmac.compare_digest(h.hex(), u["hash"])
 
 
-# Un solo utente: il blocco e' globale, non per indirizzo (stessa scelta del watchdog).
+# Un solo utente: il blocco e' globale, non per indirizzo.
 _lock = threading.Lock()
 _falliti = []
 _ultimo_totp = [0]
@@ -163,9 +163,9 @@ def f_euro(x):
 # --- serratura ----------------------------------------------------------------
 @app.before_request
 def serratura():
-    if request.remote_addr not in AMMESSI:
+    if not config.ammesso(request.remote_addr, RETI):
         abort(403)
-    if request.endpoint in ("accesso", "static"):
+    if request.endpoint in ("accesso", "static", "marchio", "manifesto"):
         return
     if not session.get("dentro") or session.get("gen") != (leggi_utente() or {}).get("gen"):
         session.clear()
@@ -184,7 +184,7 @@ def intestazioni(r):
     r.headers["X-Content-Type-Options"] = "nosniff"
     r.headers["Referrer-Policy"] = "no-referrer"
     r.headers["X-Frame-Options"] = "DENY"
-    if request.endpoint not in ("static", "immagine"):
+    if request.endpoint not in ("static", "immagine", "marchio", "manifesto"):
         r.headers["Cache-Control"] = "no-store"
     return r
 
@@ -193,6 +193,11 @@ def intestazioni(r):
 def comuni():
     return dict(csrf=session.get("csrf", ""), nome_utente=session.get("nome"),
                 offerte=logica.OFFERTE, sezione=request.endpoint)
+
+
+@app.context_processor
+def stemma():
+    return dict(stemma=file_marchio("logo-scritta.jpg") is not None)
 
 
 @app.route("/accesso", methods=["GET", "POST"])
@@ -244,6 +249,34 @@ def esci():
 
 
 # --- copertine ----------------------------------------------------------------
+# Il marchio: icone neutre in static/icone; una installazione puo' metterne di
+# sue in ~/.config/palinsesto/marchio/ con gli stessi nomi (piu' logo-scritta.jpg
+# per la pagina di accesso), e vincono loro
+MARCHIO = {"icona-32.png", "apple-touch-icon.png", "icona-192.png", "icona-512.png", "logo-scritta.jpg"}
+
+
+def file_marchio(nome):
+    for cartella in (CONF / "marchio", QUI / "static" / "icone"):
+        if (cartella / nome).is_file():
+            return cartella / nome
+    return None
+
+
+@app.route("/marchio/<nome>")
+def marchio(nome):
+    f = file_marchio(nome) if nome in MARCHIO else None
+    if not f:
+        abort(404)
+    return send_file(f, max_age=86400)
+
+
+@app.route("/manifest.webmanifest")
+def manifesto():
+    r = app.response_class(render_template("manifest.webmanifest"), mimetype="application/manifest+json")
+    r.headers["Cache-Control"] = "public, max-age=86400"
+    return r
+
+
 @app.route("/img/<misura>/<nome>")
 def immagine(misura, nome):
     if misura not in MISURE_IMG or not re.fullmatch(r"[A-Za-z0-9_-]{5,64}\.(jpg|png|svg)", nome):
@@ -536,7 +569,7 @@ def scheda_azione(tipo, tmdb_id):
         c().execute("DELETE FROM lista_titoli WHERE titolo_id=?", (tid,))
         c().execute("DELETE FROM miei WHERE titolo_id=?", (tid,))
     elif az in ("non_ce", "ce_di_nuovo"):
-        # TMDB dice che e' su quel servizio, ma non e' vero (Lioness su Netflix, 29/09)
+        # TMDB dice che e' su quel servizio, ma non e' vero (succede: la copia di TMDB resta indietro)
         sid = request.form.get("servizio", type=int)
         if sid not in logica.servizi_disponibili(c(), tid, grezzi=True):
             abort(400)
@@ -898,8 +931,8 @@ def impostazioni_salva():
         # impedisce due giri insieme
         if not db.giro_in_corso():
             import subprocess
-            # l'uscita resta quella della pagina (journal, quindi Loki: 29/09 il
-            # giro lanciato da qui non si vedeva nei log); in piu' il file
+            # l'uscita resta quella della pagina (journal: il giro lanciato da
+            # qui deve comparire nei log come quello notturno); in piu' il file
             registro = db.DATI / db.GIRO_LOG
             registro.write_text("")
             subprocess.Popen([sys.executable, "-u", str(pathlib.Path(__file__).resolve().parent / "aggiorna.py")],

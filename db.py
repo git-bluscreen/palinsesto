@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS episodi (
 );
 
 -- episodi segnati visti uno per uno; `fonte` dice chi l'ha segnato:
--- 'mano' dalla pagina, 'firetv:<entita>' dal rilevamento automatico...
+-- 'mano' dalla pagina, '<fonte>:<entita>' da un eventuale rilevamento automatico...
 CREATE TABLE IF NOT EXISTS visti_ep (
   titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
   stagione INTEGER, numero INTEGER,

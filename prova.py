@@ -8,6 +8,7 @@ aspettarlo. Database in una cartella temporanea.
 import copy, datetime as dt, os, pathlib, sys, tempfile
 
 os.environ["PALINSESTO_DATI"] = tempfile.mkdtemp(prefix="palinsesto-prova-")
+os.environ["PALINSESTO_CONF"] = tempfile.mkdtemp(prefix="palinsesto-prova-conf-")   # mai la configurazione vera
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import db, logica, aggiorna
 
@@ -472,6 +473,17 @@ a = next(x for x in pp["azioni"] if x["s"]["nome"] == "Con pausa")
 atteso("...e il piano lo racconta", [f"{a['tipo']} {a['testo']}"], f"pagato Si guarda fino al {logica.breve(D + dt.timedelta(19))}, poi in pausa fino al {logica.breve(D + dt.timedelta(80))}")
 atteso("...la pausa finita si chiude da sola, anche il suo inizio", logica.scadenze(pc, D + dt.timedelta(80)), "Con pausa: finita la pausa", esatti=False)
 atteso("...niente resta di lei", [str(pc.execute("SELECT pausa_dal, pausa_fino FROM servizi WHERE id=11").fetchone()[:])], "(None, None)")
+
+# configurazione: chi puo' collegarsi
+import config
+reti = config.reti_ammesse()
+atteso("senza palinsesto.json: solo localhost", [f"{config.ammesso('127.0.0.1', reti)} {config.ammesso('192.0.2.5', reti)} {config.ammesso('boh', reti)}"], "True False False")
+(config.CONF).mkdir(parents=True, exist_ok=True)
+config.FILE.write_text('{"proxy": ["192.0.2.10"], "ammessi": ["198.51.100.0/24"], "pagina": "https://p.example.org/"}')
+reti = config.reti_ammesse()
+atteso("con proxy e rete ammessa", [f"{config.ammesso('192.0.2.10', reti)} {config.ammesso('198.51.100.7', reti)} {config.ammesso('192.0.2.11', reti)} {config.pagina()}"],
+       "True True False https://p.example.org")
+config.FILE.unlink()
 
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

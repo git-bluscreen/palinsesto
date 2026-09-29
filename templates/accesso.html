@@ -3,8 +3,12 @@
 {% block tutto %}
 <main class="accesso">
   <form class="scheda-accesso" method="post" action="{{ url_for('accesso') }}" autocomplete="on">
-    <div class="stemma"><img src="{{ url_for('static', filename='marchio/logo-scritta.jpg') }}" alt="" width="1000" height="345"></div>
+    {% if stemma %}
+    <div class="stemma"><img src="{{ url_for('marchio', nome='logo-scritta.jpg') }}" alt="" width="1000" height="345"></div>
     <p class="sottotitolo">Palinsesto</p>
+    {% else %}
+    <div class="stemma-neutro"><img src="{{ url_for('marchio', nome='icona-192.png') }}" alt="" width="72" height="72"><b>Palinsesto</b></div>
+    {% endif %}
     {% if senza_utente %}
       <p class="avviso">Nessun utente configurato. Sul container, come l'utente del servizio:<br>
       <code>python3 ~/palinsesto/utente.py</code></p>

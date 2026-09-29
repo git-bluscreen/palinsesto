@@ -17,6 +17,10 @@ def ok(nome, cond, extra=""):
     print(("ok   " if cond else "NO   ") + nome + ("" if cond else f"  {extra}"))
     if not cond: ERR.append(nome)
 
+r = requests.get(B + "/marchio/icona-32.png"); ok("icona neutra anche senza accesso", r.status_code == 200 and r.headers["Content-Type"] == "image/png")
+ok("marchio: nome non ammesso -> 404", requests.get(B + "/marchio/utente.json").status_code == 404)
+r = requests.get(B + "/manifest.webmanifest"); ok("manifest senza accesso, col nome neutro", r.status_code == 200 and '"name": "Palinsesto"' in r.text and "/marchio/icona-192.png" in r.text)
+ok("accesso: logo neutro (nessun marchio nella configurazione)", 'class="stemma-neutro"' in requests.get(B + "/accesso").text)
 r = s.get(B + "/", allow_redirects=False); ok("senza sessione -> accesso", r.status_code == 302 and "/accesso" in r.headers["Location"], r.status_code)
 r = s.post(B + "/accesso", data=dict(nome="prova", password="sbagliata", codice="000000")); ok("password sbagliata -> 401", r.status_code == 401)
 r = s.post(B + "/accesso", data=dict(nome="prova", password="prova-prova-123", codice=pyotp.TOTP("JBSWY3DPEHPK3PXP").now(), dopo="/novita"), allow_redirects=False)

@@ -1,4 +1,4 @@
-/* Palinsesto — prima il telefono, poi lo schermo largo. Colori come il pannello del watchdog. */
+/* Palinsesto — prima il telefono, poi lo schermo largo. */
 :root {
   --sfondo: #f5f6f8; --superficie: #ffffff; --superficie-2: #f0f2f5; --bordo: #e2e5ea;
   --testo: #1b1f24; --tenue: #5f6875; --accento: #2f6fde; --accento-testo: #ffffff;
@@ -73,6 +73,8 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 }
 .stemma { margin: -.5rem -.5rem .25rem; border-radius: 12px; overflow: hidden; background: #0f1216; }
 .stemma img { display: block; width: 100%; height: auto; }
+.stemma-neutro { display: grid; justify-items: center; gap: .5rem; margin: .25rem 0 .75rem; font-size: 1.3rem; }
+.stemma-neutro img { border-radius: 16px; }
 .sottotitolo { margin: -.25rem 0 .5rem; text-align: center; color: var(--tenue); font-size: .9rem; letter-spacing: .06em; text-transform: uppercase; }
 
 /* --- struttura --- */

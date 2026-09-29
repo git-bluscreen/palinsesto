@@ -1,0 +1,12 @@
+{
+  "name": "Palinsesto",
+  "short_name": "Palinsesto",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1216",
+  "theme_color": "#0f1216",
+  "icons": [
+    {"src": "{{ url_for('marchio', nome='icona-192.png') }}", "sizes": "192x192", "type": "image/png"},
+    {"src": "{{ url_for('marchio', nome='icona-512.png') }}", "sizes": "512x512", "type": "image/png"}
+  ]
+}

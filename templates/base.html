@@ -5,10 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <title>{% block titolo %}Palinsesto{% endblock %}</title>
-<link rel="icon" href="{{ url_for('static', filename='marchio/favicon.ico') }}" sizes="any">
-<link rel="icon" href="{{ url_for('static', filename='marchio/icona-32.png') }}" type="image/png" sizes="32x32">
-<link rel="apple-touch-icon" href="{{ url_for('static', filename='marchio/apple-touch-icon.png') }}">
-<link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+<link rel="icon" href="{{ url_for('marchio', nome='icona-32.png') }}" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="{{ url_for('marchio', nome='apple-touch-icon.png') }}">
+<link rel="manifest" href="{{ url_for('manifesto') }}">
 <meta name="theme-color" content="#0f1216">
 <link rel="stylesheet" href="{{ url_for('static', filename='stile.css') }}">
 <script src="{{ url_for('static', filename='palinsesto.js') }}" defer></script>
@@ -16,7 +15,7 @@
 <body>
 {% block tutto %}
 <header class="testata">
-  <a class="marchio" href="{{ url_for('casa') }}"><img src="{{ url_for('static', filename='marchio/icona-32.png') }}" alt="" width="28" height="28"><b>Palinsesto</b></a>
+  <a class="marchio" href="{{ url_for('casa') }}"><img src="{{ url_for('marchio', nome='icona-32.png') }}" alt="" width="28" height="28"><b>Palinsesto</b></a>
   <form class="cerca-rapida" action="{{ url_for('cerca') }}" role="search">
     <input type="search" name="q" placeholder="Cerca" aria-label="Cerca film o serie" value="{{ q or '' }}">
   </form>

@@ -1,26 +1,27 @@
 """Il piano sul calendario di Nextcloud, via CalDAV.
 
-Il calendario e' DELL'UTENTE (un calendario chiamato «Palinsesto»), che lo condivide con
-permesso di modifica all'utente Nextcloud dedicato `palinsesto` (per revocare:
-togliere la condivisione o disattivare l'utente). Palinsesto non crea
-calendari suoi: se la condivisione sparisce, l'errore compare in /piano.
-Credenziali in ~/.config/palinsesto/caldav.json {url, utente, password},
-da scrivere senza farle comparire a schermo.
+Il calendario e' DELL'UTENTE (un calendario chiamato «Palinsesto»), che lo
+condivide con permesso di modifica a un utente Nextcloud dedicato, per esempio
+`palinsesto` (per revocare: togliere la condivisione o disattivare l'utente).
+Palinsesto non crea calendari suoi: se la condivisione sparisce, l'errore
+compare in /piano. Credenziali in ~/.config/palinsesto/caldav.json
+{url, utente, password}, da scrivere senza farle comparire a schermo.
 
 Gli eventi hanno UID stabili (`palinsesto-<uid>`): quando il piano cambia, lo
 stesso promemoria si sposta; quando non serve piu', si cancella. Si tocca solo
 cio' che inizia con «palinsesto-»: il resto del calendario non e' nostro.
 """
-import datetime as dt, hashlib, json, re
+import datetime as dt, hashlib, json, re, urllib.parse
 
 import requests
 
-import db
+import config, db
 from tmdb import CONF
 
 FILE = CONF / "caldav.json"
 NOME = "palinsesto"          # il calendario condiviso si riconosce dal nome che comincia cosi'
-PAGINA = "https://palinsesto.example.org/piano"
+PAGINA = config.pagina() + "/piano"
+DOMINIO = urllib.parse.urlsplit(config.pagina()).hostname or "palinsesto.local"   # per gli UID degli eventi
 
 
 def conf():
@@ -38,7 +39,7 @@ def ics(e):
     """Un evento di un giorno intero; `avviso` = giorni prima, alle 9."""
     g = e["giorno"]
     righe = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Palinsesto//IT", "BEGIN:VEVENT",
-             f"UID:palinsesto-{e['uid']}@palinsesto.example.org",
+             f"UID:palinsesto-{e['uid']}@{DOMINIO}",
              f"DTSTART;VALUE=DATE:{g:%Y%m%d}", f"DTEND;VALUE=DATE:{g + dt.timedelta(days=1):%Y%m%d}",
              f"SUMMARY:{testo_ics(e['titolo'])}", f"DESCRIPTION:{testo_ics(e['testo'] + chr(10) + PAGINA)}",
              f"URL:{PAGINA}", "TRANSP:TRANSPARENT",
