@@ -44,6 +44,8 @@ button.tenue { background: var(--superficie); border-color: var(--bordo); }
 button.tenue:hover { background: var(--superficie-2); }
 button.collegamento { background: none; border: 0; padding: 0; color: var(--accento); cursor: pointer; font-size: inherit; }
 button.collegamento.pericolo { color: var(--male); }
+a.interruttore { display: inline-flex; align-items: center; color: var(--testo); }
+a.interruttore:hover { text-decoration: none; background: var(--superficie-2); }
 .interruttore {
   border: 1px solid var(--bordo); background: var(--superficie); border-radius: 999px;
   padding: .4rem .85rem; cursor: pointer; min-height: 36px; white-space: nowrap;
@@ -107,8 +109,16 @@ label { display: grid; gap: .3rem; font-size: .88rem; color: var(--tenue); }
 .sezione-titolo .tutti, .sezione-titolo .collegamento { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: .85rem; }
 .piede { max-width: 1100px; margin: 0 auto; padding: 1.5rem 16px 1rem; color: var(--tenue); font-size: .78rem; border-top: 1px solid var(--bordo); }
 .piede p { margin: .3rem 0; }
-.piede-link .collegamento { font-size: .78rem; }
 .stato-giro { color: var(--tenue); font-size: .8rem; margin-top: 2rem; }
+/* in alto a destra: impostazioni ed esci, anche sul telefono */
+.testata-azioni { display: flex; gap: .15rem; align-items: center; flex: none; }
+.testata-azioni .icona { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 8px; color: var(--tenue);
+                         background: none; border: 0; padding: 0; cursor: pointer; }
+.testata-azioni .icona:hover, .testata-azioni .icona[aria-current] { color: var(--testo); background: var(--superficie-2); text-decoration: none; }
+.testata-azioni svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* la manina su tutto cio' che si preme, non solo sui link (misurato il 29/09) */
+summary, select, input[type=radio], input[type=checkbox],
+label:has(> input[type=radio]), label:has(> input[type=checkbox]) { cursor: pointer; }
 
 @media (min-width: 820px) {
   body { padding-bottom: 0; }

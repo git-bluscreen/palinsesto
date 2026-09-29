@@ -24,3 +24,10 @@ window.addEventListener("DOMContentLoaded", () => {
   const d = li && li.querySelector("details");
   if (d) d.open = true;
 });
+// mentre un giro gira (Impostazioni), la pagina si ricarica da sola e torna alla
+// sezione: il link a «#aggiorna» dalla stessa pagina scorreva e basta (29/09)
+window.addEventListener("DOMContentLoaded", () => {
+  const el = document.querySelector("[data-ricarica]");
+  if (!el) return;
+  setTimeout(() => { location.replace(location.pathname + "?t=" + Date.now() + "#aggiorna"); }, 1000 * Number(el.dataset.ricarica || 10));
+});

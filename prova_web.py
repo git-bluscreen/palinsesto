@@ -168,6 +168,10 @@ ok("pausa programmata anche dal modulo", "poi in pausa dal 10/01/2030 al 10/02/2
 r = s.post(B + "/abbonamenti/1", data=dict(stato="pausa", ciclo="mese", pausa_dal="2030-03-10", pausa_fino="2030-02-10", csrf=csrf)); ok("pausa che finisce prima di cominciare -> 400", r.status_code == 400)
 
 # aggiorna adesso: parte in un processo a parte (qui senza chiave TMDB: fallisce subito, e lo dice)
+r = s.get(B + "/")
+ok("in alto a destra: impostazioni ed esci", 'class="testata-azioni"' in r.text and 'aria-label="Impostazioni"' in r.text and 'aria-label="Esci"' in r.text)
+ok("...e il piè di pagina non li ripete", "piede-link" not in r.text)
+ok("impostazioni: dentro c'è «Importa»", 'href="/importa"' in s.get(B + "/impostazioni").text)
 r = s.get(B + "/impostazioni"); ok("impostazioni: «Aggiorna adesso»", 'value="aggiorna"' in r.text and "Ultimo giro concluso" in r.text)
 r = s.post(B + "/impostazioni", data=dict(azione="aggiorna", csrf=csrf), allow_redirects=False)
 ok("...lanciato, si torna alla sezione", r.status_code == 302 and r.headers["Location"].endswith("#aggiorna"), r.headers.get("Location"))

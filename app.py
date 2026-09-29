@@ -898,10 +898,14 @@ def impostazioni_salva():
         # impedisce due giri insieme
         if not db.giro_in_corso():
             import subprocess
-            with open(db.DATI / db.GIRO_LOG, "w") as uscita:
-                subprocess.Popen([sys.executable, "-u", str(pathlib.Path(__file__).resolve().parent / "aggiorna.py")],
-                                 stdout=uscita, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                 start_new_session=True, cwd=str(pathlib.Path(__file__).resolve().parent))
+            # l'uscita resta quella della pagina (journal, quindi Loki: 29/09 il
+            # giro lanciato da qui non si vedeva nei log); in piu' il file
+            registro = db.DATI / db.GIRO_LOG
+            registro.write_text("")
+            subprocess.Popen([sys.executable, "-u", str(pathlib.Path(__file__).resolve().parent / "aggiorna.py")],
+                             stdin=subprocess.DEVNULL, start_new_session=True,
+                             env=dict(os.environ, PALINSESTO_REGISTRO=str(registro)),
+                             cwd=str(pathlib.Path(__file__).resolve().parent))
             log(f"giro lanciato dalla pagina da {session.get('nome')}")
             time.sleep(1)       # il tempo di prendere il lucchetto: la pagina dopo dice «in corso»
     elif az == "mappa":

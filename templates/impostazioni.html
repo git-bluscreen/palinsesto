@@ -9,7 +9,8 @@
   <p class="nota">Ogni notte alle 05:30 Palinsesto riscarica schede, servizi, arrivi e consigli (e alle 08:30 riprova, se di notte non ci è riuscito). Qui lo fai partire adesso: dura qualche minuto, e le notifiche arrivano come di notte.</p>
   <p>Ultimo giro concluso: <b>{{ ultimo_giro[:16].replace('T', ' alle ') if ultimo_giro else 'mai' }}</b></p>
   {% if in_corso %}
-  <p class="avviso-giro">Un giro è in corso{% if lanciato %} (lanciato alle {{ lanciato.strftime('%H:%M') }}){% endif %}. <a href="{{ url_for('impostazioni') }}#aggiorna">Ricarica</a> per vedere a che punto è.</p>
+  <p class="avviso-giro" data-ricarica="10">Un giro è in corso{% if lanciato %} (lanciato alle {{ lanciato.strftime('%H:%M') }}){% endif %}: la pagina si aggiorna da sola ogni 10 secondi.</p>
+  <form method="get" action="{{ url_for('impostazioni') }}#aggiorna"><input type="hidden" name="t" value="{{ range(100000)|random }}"><button class="tenue">Ricarica adesso</button></form>
   {% else %}
   <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="aggiorna">
     <button class="primario">Aggiorna adesso</button></form>
@@ -18,6 +19,12 @@
   <details class="riquadro"{% if in_corso %} open{% endif %}><summary>Ultime righe del giro lanciato da qui{% if lanciato %} ({{ lanciato.strftime('%d/%m %H:%M') }}){% endif %}</summary>
     <pre class="registro">{{ registro|join('\n') }}</pre></details>
   {% endif %}
+</section>
+
+<section id="importa">
+  <h2 class="sezione-titolo">Importa</h2>
+  <p class="nota">Aggiungi in un colpo un elenco di titoli copiato da JustWatch (Watchlist, Tracking serie TV), con il punto a cui sei arrivato.</p>
+  <p><a class="interruttore" href="{{ url_for('importa') }}">Importa da JustWatch ›</a></p>
 </section>
 
 <section>

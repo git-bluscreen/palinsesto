@@ -47,8 +47,17 @@ GIORNI_CATALOGO = 540      # «recenti»: usciti negli ultimi 18 mesi
 PAGINE_CATALOGO = 5        # 20 titoli a pagina, per tipo e per servizio
 
 
+REGISTRO = os.environ.get("PALINSESTO_REGISTRO")   # giro lanciato dalla pagina: anche su file, per mostrarlo
+
+
 def log(msg):
-    print(msg, flush=True)
+    print(msg, flush=True)          # journal (e Loki), da qualunque parte parta il giro
+    if REGISTRO:
+        try:
+            with open(REGISTRO, "a") as f:
+                f.write(msg + "\n")
+        except OSError:
+            pass
 
 
 def aggiorna_provider(c, api, oggi):

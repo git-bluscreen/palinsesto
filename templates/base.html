@@ -18,7 +18,7 @@
 <header class="testata">
   <a class="marchio" href="{{ url_for('casa') }}"><img src="{{ url_for('static', filename='marchio/icona-32.png') }}" alt="" width="28" height="28"><b>Palinsesto</b></a>
   <form class="cerca-rapida" action="{{ url_for('cerca') }}" role="search">
-    <input type="search" name="q" placeholder="Cerca film o serie" aria-label="Cerca film o serie" value="{{ q or '' }}">
+    <input type="search" name="q" placeholder="Cerca" aria-label="Cerca film o serie" value="{{ q or '' }}">
   </form>
   <nav class="nav-alto" aria-label="Sezioni">
     <a href="{{ url_for('casa') }}" {% if sezione == 'casa' %}aria-current="page"{% endif %}>Home</a>
@@ -27,17 +27,19 @@
     <a href="{{ url_for('piano') }}" {% if sezione == 'piano' %}aria-current="page"{% endif %}>Piano</a>
     <a href="{{ url_for('abbonamenti') }}" {% if sezione in ('abbonamenti', 'piano') %}aria-current="page"{% endif %}>Abbonamenti</a>
   </nav>
+  <div class="testata-azioni">
+    <a class="icona" href="{{ url_for('impostazioni') }}" title="Impostazioni (e importazione)" aria-label="Impostazioni" {% if sezione in ('impostazioni', 'importa') %}aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>
+    <form method="post" action="{{ url_for('esci') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="icona" title="Esci ({{ nome_utente }})" aria-label="Esci">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button></form>
+  </div>
 </header>
 <main class="pagina">
 {% block corpo %}{% endblock %}
 </main>
 <footer class="piede">
   <p>Schede e copertine da <a href="https://www.themoviedb.org" rel="noreferrer">TMDB</a>, disponibilità da <a href="https://www.justwatch.com/it" rel="noreferrer">JustWatch</a>. Questo prodotto usa l'API di TMDB ma non è approvato né certificato da TMDB.</p>
-  <p class="piede-link">
-    <a href="{{ url_for('impostazioni') }}">Impostazioni</a> ·
-    <a href="{{ url_for('importa') }}">Importa</a> ·
-    <form method="post" action="{{ url_for('esci') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="collegamento">Esci ({{ nome_utente }})</button></form>
-  </p>
 </footer>
 <nav class="nav-basso" aria-label="Sezioni">
   <a href="{{ url_for('casa') }}" {% if sezione == 'casa' %}aria-current="page"{% endif %}>
