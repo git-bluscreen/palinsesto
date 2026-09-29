@@ -133,10 +133,46 @@ r = s.get(B + "/piano"); ok("piano con un servizio in pausa", r.status_code == 2
 r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="ripreso", torna="/abbonamenti", csrf=csrf))
 ok("ripreso dalla pausa: attivo, rinnovo fra un mese", "Attivo · rinnovo" in r.text and not re.search(r"In pausa fino al \d", r.text))
 r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="pausa", fino="2030-02-01", proroghe="1", torna="/abbonamenti", csrf=csrf))
-ok("«L'ho messo in pausa» dal piano", "In pausa fino al 01/02/2030" in r.text)
+ok("«L'ho messo in pausa» dal piano: comincia al rinnovo (fra un mese), non oggi", re.search(r"poi in pausa dal \d\d/\d\d/\d{4} al 01/02/2030", r.text) is not None,
+   re.findall(r"Attivo fino[^<]*|In pausa[^<]*", r.text)[:2])
 r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="disdetto", torna="/abbonamenti", csrf=csrf))
-ok("disdetto durante la pausa: finisce subito, niente più pausa", "Disdetto" in r.text and not re.search(r"In pausa fino al \d", r.text))
+ok("disdetto con la pausa solo chiesta: resta pagato fino al giorno prima, niente più pausa", "Disdetto" in r.text and "finisce il" in r.text
+   and not re.search(r"In pausa fino al \d|poi in pausa dal", r.text), re.findall(r"Disdetto[^<]*", r.text)[:2])
 r = s.post(B + "/abbonamenti/9999/fatto", data=dict(azione="attivato", csrf=csrf)); ok("servizio inesistente -> 404", r.status_code == 404)
+# «non c'e' davvero» nella scheda, con conferma
+r = s.get(B + "/t/tv/1")
+m = re.search(r'data-conferma="[^"]*non è davvero su Netflix[^"]*"><input type="hidden" name="csrf" value="[^"]+"><input type="hidden" name="azione" value="non_ce"><input type="hidden" name="servizio" value="(\d+)"', r.text)
+ok("scheda: «non c'è davvero» su Netflix, con conferma", bool(m), r.text[r.text.find('id="dove"'):][:400])
+if m:
+    nf = m.group(1)
+    r = s.post(B + "/t/tv/1", data=dict(azione="non_ce", servizio=nf, csrf=csrf))
+    ok("...premuto: barrato e «c'è di nuovo»", r.status_code == 200 and "hai segnalato che non c'è" in r.text and "c'è di nuovo" in r.text)
+    r = s.post(B + "/t/tv/1", data=dict(azione="ce_di_nuovo", servizio=nf, csrf=csrf))
+    ok("...«c'è di nuovo»: torna normale", "hai segnalato che non c'è" not in r.text and 'value="non_ce"' in r.text)
+r = s.post(B + "/t/tv/1", data=dict(azione="non_ce", servizio=9999, csrf=csrf)); ok("servizio dove non e' -> 400", r.status_code == 400)
+r = s.post(B + "/t/tv/1", data=dict(azione="non_ce", servizio=1)); ok("correzione senza CSRF -> 400", r.status_code == 400)
+
+# pausa: dal rinnovo, annullabile prima che cominci
+s.post(B + "/abbonamenti/1", data=dict(stato="attivo", ciclo="mese", prezzo="13,99", rinnovo="2030-01-10", pausa_durate="30, 60,90", csrf=csrf))
+r = s.get(B + "/abbonamenti"); ok("durate della pausa salvate", 'value="30, 60, 90"' in r.text)
+r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="pausa", fino="2030-03-10", torna="/abbonamenti", csrf=csrf))
+ok("«L'ho messo in pausa»: comincia al rinnovo, fino ad allora attivo", "poi in pausa dal 10/01/2030 al 10/03/2030" in r.text, re.findall(r"Attivo fino[^<]*|In pausa[^<]*", r.text)[:2])
+r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="pausa", fino="2030-04-10", csrf=csrf)); ok("una seconda pausa sopra la prima -> 400", r.status_code == 400)
+ok("piano con una pausa programmata", s.get(B + "/piano").status_code == 200)
+r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="ripreso", torna="/abbonamenti", csrf=csrf))
+ok("«Ho annullato la pausa»: si rinnova come prima", "Attivo · rinnovo 10/01/2030" in r.text, re.findall(r"Attivo[^<]*", r.text)[:2])
+r = s.post(B + "/abbonamenti/1", data=dict(stato="pausa", ciclo="mese", pausa_dal="2030-01-10", pausa_fino="2030-02-10", csrf=csrf))
+ok("pausa programmata anche dal modulo", "poi in pausa dal 10/01/2030 al 10/02/2030" in r.text)
+r = s.post(B + "/abbonamenti/1", data=dict(stato="pausa", ciclo="mese", pausa_dal="2030-03-10", pausa_fino="2030-02-10", csrf=csrf)); ok("pausa che finisce prima di cominciare -> 400", r.status_code == 400)
+
+# aggiorna adesso: parte in un processo a parte (qui senza chiave TMDB: fallisce subito, e lo dice)
+r = s.get(B + "/impostazioni"); ok("impostazioni: «Aggiorna adesso»", 'value="aggiorna"' in r.text and "Ultimo giro concluso" in r.text)
+r = s.post(B + "/impostazioni", data=dict(azione="aggiorna", csrf=csrf), allow_redirects=False)
+ok("...lanciato, si torna alla sezione", r.status_code == 302 and r.headers["Location"].endswith("#aggiorna"), r.headers.get("Location"))
+import time; time.sleep(3)
+r = s.get(B + "/impostazioni"); ok("...e la pagina mostra l'esito del giro", "manca la chiave TMDB" in r.text, re.findall(r'<pre class="registro">[^<]*', r.text))
+r = s.post(B + "/impostazioni", data=dict(azione="aggiorna")); ok("aggiorna senza CSRF -> 400", r.status_code == 400)
+
 h = s.get(B + "/").headers; ok("CSP e no-store", "default-src 'none'" in h["Content-Security-Policy"] and h["Cache-Control"] == "no-store")
 if len(sys.argv) > 1:
     r = requests.get(f"http://{sys.argv[1]}:45091/accesso"); ok("IP non ammesso -> 403", r.status_code == 403, r.status_code)

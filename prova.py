@@ -291,6 +291,22 @@ it = logica.interesse(c, righe, g)
 atteso("interesse: quella simile ai miei «potrebbe piacerti», col motivo", [f"{it['tv:60'][0] >= logica.INTERESSE_SI} {it['tv:60'][1]}"], "True come «Serie Uno»")
 atteso("...quella simile al nascosto in basso", [str(it["tv:62"][0] <= logica.INTERESSE_NO)], "True")
 
+# «non c'e' davvero»: Netflix ignorato per Serie Uno finche' TMDB lo elenca
+netflix = c.execute("SELECT id FROM servizi WHERE nome='Netflix'").fetchone()[0]
+api.schede[("tv", 1)]["watch/providers"]["results"]["IT"] = prov(NETFLIX, DISNEY)
+notte(c, api, d50 + dt.timedelta(1))
+c.execute("INSERT INTO correzioni VALUES ('tv:1', ?, ?)", (netflix, d50.isoformat())); c.commit()
+atteso("correzione: Netflix non conta piu' per Serie Uno", [str(sorted(logica.servizi_disponibili(c, "tv:1").values()))], "['Disney+']")
+atteso("...ma TMDB lo elenca ancora (grezzi)", [str(sorted(logica.servizi_disponibili(c, "tv:1", grezzi=True).values()))], "['Disney+', 'Netflix']")
+notte(c, api, d50 + dt.timedelta(2))
+atteso("...finche' TMDB lo dice, la correzione resta", [str(c.execute("SELECT COUNT(*) FROM correzioni").fetchone()[0])], "1")
+api.schede[("tv", 1)]["watch/providers"]["results"]["IT"] = prov(DISNEY)
+ev_via = notte(c, api, d50 + dt.timedelta(3)) + notte(c, api, d50 + dt.timedelta(4))
+atteso("...TMDB smette di elencarlo: nessun «non e' piu' su Netflix» (per te non c'era)", [e for e in ev_via if "Netflix" in e])
+atteso("...e la correzione si toglie da sola", [str(c.execute("SELECT COUNT(*) FROM correzioni").fetchone()[0])], "0")
+api.schede[("tv", 1)]["watch/providers"]["results"]["IT"] = prov(NETFLIX, DISNEY)
+atteso("...se poi arriva davvero, e' un arrivo vero", notte(c, api, d50 + dt.timedelta(5)), "«Serie Uno» è arrivato su Netflix", esatti=False)
+
 # notifica: un solo messaggio, poi niente
 aggiorna.notifica(c, {"Netflix": 1}, prova=True)
 resto = c.execute("SELECT COUNT(*) FROM eventi WHERE notificare=1 AND notificato=0").fetchone()[0]
@@ -412,6 +428,36 @@ atteso("esce qualcosa durante la pausa: riprendilo, con promemoria", [f"{a['tipo
 atteso("...nel piano il periodo dice «riprendi», non «attiva»", [str([x["azione"] for x in pp["periodi"][0]["voci"] if x["s"]["nome"] == "In pausa"])], "['riprendi']")
 atteso("il giorno in cui finisce: la pausa si chiude da sola, con avviso", logica.scadenze(pc, D + dt.timedelta(50)), "In pausa: finita la pausa, l'abbonamento è ripartito", esatti=False)
 atteso("...e torna un abbonamento attivo normale", [str(pc.execute("SELECT pausa_fino, rinnovo FROM servizi WHERE id=10").fetchone()[:])], f"(None, '{iso(50)}')")
+
+# pausa invece della disdetta: il servizio serve di nuovo fra qualche mese
+pc.execute("INSERT INTO servizi (id, nome, stato, prezzo, ciclo, rinnovo, pausa_durate) VALUES (11, 'Con pausa', 'attivo', 7.99, 'mese', ?, '30,60,90')", (iso(20),))
+pc.execute("INSERT INTO provider (id, nome, servizio_id) VALUES (11, 'Con pausa', 11)")
+serie(111, "Adesso sul pausabile", [11], [iso(-40)] * 2)                                 # 1,7 h, si guarda nel pagato
+serie(112, "Dopo sul pausabile", [11], [iso(-20 + 10 * i) for i in range(10)])          # completa a +70
+pc.commit()
+pp = logica.piano(pc, D, 25, ancora=D)
+a = next(x for x in pp["azioni"] if x["s"]["nome"] == "Con pausa")
+atteso("pausa: serve di nuovo quando «Dopo» e' completa (+70): pausa dal rinnovo (+20), 60 giorni, riparte a +80",
+       [f"{a['tipo']} {a['testo']}"], f"pausa Mettilo in pausa prima del {logica.breve(D + dt.timedelta(20))}, per 60 giorni: "
+                                        f"riparte il {logica.breve(D + dt.timedelta(80))}")
+ev = {e["uid"]: e for e in logica.promemoria(pc, D, pp)}
+atteso("...promemoria «Metti in pausa» il giorno prima del rinnovo, niente «Disdici»",
+       [f"{ev['pausa-11']['giorno']} {ev['pausa-11']['titolo']} {'disdici-11' in ev}"], f"{D + dt.timedelta(19)} Metti in pausa Con pausa False")
+pc.execute("UPDATE servizi SET pausa_durate='14,28' WHERE id=11"); pc.commit()
+a = next(x for x in logica.piano(pc, D, 25, ancora=D)["azioni"] if x["s"]["nome"] == "Con pausa")
+atteso("...pause troppo corte per arrivarci: disdici, e il perche'", [f"{a['tipo']} {a['testo']}"], "disdici", "nessuna pausa concessa", esatti=False)
+pc.execute("UPDATE servizi SET pausa_durate='30,60,90' WHERE id=11"); pc.commit()
+# segnata la pausa: comincia al rinnovo, fino ad allora si guarda
+pc.execute("UPDATE servizi SET pausa_dal=?, pausa_fino=?, rinnovo=? WHERE id=11", (iso(20), iso(80), iso(80))); pc.commit()
+s11 = pc.execute("SELECT * FROM servizi WHERE id=11").fetchone()
+atteso("pausa chiesta: non ancora in pausa, ma programmata", [f"{logica.in_pausa(s11, D)} {logica.pausa_programmata(s11, D)} {logica.in_pausa(s11, D + dt.timedelta(25))}"], "False True True")
+pp = logica.piano(pc, D, 25, ancora=D)
+p0 = {x["s"]["nome"]: (x["azione"], [y["t"]["titolo"] for y in x["titoli"]]) for x in pp["periodi"][0]["voci"]}
+atteso("...i giorni pagati prima della pausa si usano", [str(p0.get("Con pausa"))], "('pagato', ['Adesso sul pausabile'])")
+a = next(x for x in pp["azioni"] if x["s"]["nome"] == "Con pausa")
+atteso("...e il piano lo racconta", [f"{a['tipo']} {a['testo']}"], f"pagato Si guarda fino al {logica.breve(D + dt.timedelta(19))}, poi in pausa fino al {logica.breve(D + dt.timedelta(80))}")
+atteso("...la pausa finita si chiude da sola, anche il suo inizio", logica.scadenze(pc, D + dt.timedelta(80)), "Con pausa: finita la pausa", esatti=False)
+atteso("...niente resta di lei", [str(pc.execute("SELECT pausa_dal, pausa_fino FROM servizi WHERE id=11").fetchone()[:])], "(None, None)")
 
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

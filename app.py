@@ -313,7 +313,8 @@ def disponibilita(tid):
     """[(servizio o None, provider, offerta, dal)] adesso, servizi seguiti prima."""
     return c().execute("""
         SELECT d.offerta, d.dal, p.id AS pid, p.nome AS provider, p.logo AS plogo,
-               s.id AS sid, s.nome AS servizio, s.stato, s.fine, s.seguito, s.pausa_fino
+               s.id AS sid, s.nome AS servizio, s.stato, s.fine, s.seguito, s.pausa_fino, s.pausa_dal,
+               EXISTS(SELECT 1 FROM correzioni k WHERE k.titolo_id=d.titolo_id AND k.servizio_id=s.id) AS corretto
         FROM disponibilita d JOIN provider p ON p.id=d.provider_id
         LEFT JOIN servizi s ON s.id=p.servizio_id
         WHERE d.titolo_id=? AND d.fino IS NULL
@@ -345,7 +346,8 @@ def arrivi(sid=None, quanti=None):
                   EXISTS(SELECT 1 FROM miei m WHERE m.titolo_id=a.titolo_id) AS mio
            FROM in_arrivo a JOIN servizi s ON s.id=a.servizio_id JOIN titoli t ON t.id=a.titolo_id
            WHERE s.seguito=1 AND a.data >= ?
-             AND NOT EXISTS (SELECT 1 FROM nascosti n WHERE n.titolo_id=a.titolo_id)""" + \
+             AND NOT EXISTS (SELECT 1 FROM nascosti n WHERE n.titolo_id=a.titolo_id)
+             AND NOT EXISTS (SELECT 1 FROM correzioni k WHERE k.titolo_id=a.titolo_id AND k.servizio_id=a.servizio_id)""" + \
         (" AND a.servizio_id=?" if sid else "") + " ORDER BY a.data, t.titolo"
     out = {}
     righe = c().execute(q, (oggi().isoformat(), sid) if sid else (oggi().isoformat(),)).fetchall()
@@ -533,6 +535,16 @@ def scheda_azione(tipo, tmdb_id):
     elif az == "rimuovi":
         c().execute("DELETE FROM lista_titoli WHERE titolo_id=?", (tid,))
         c().execute("DELETE FROM miei WHERE titolo_id=?", (tid,))
+    elif az in ("non_ce", "ce_di_nuovo"):
+        # TMDB dice che e' su quel servizio, ma non e' vero (Lioness su Netflix, 29/09)
+        sid = request.form.get("servizio", type=int)
+        if sid not in logica.servizi_disponibili(c(), tid, grezzi=True):
+            abort(400)
+        if az == "non_ce":
+            c().execute("INSERT OR IGNORE INTO correzioni VALUES (?,?,?)", (tid, sid, oggi().isoformat()))
+        else:
+            c().execute("DELETE FROM correzioni WHERE titolo_id=? AND servizio_id=?", (tid, sid))
+        ancora = "#dove"
     elif az == "nascondi":
         if mio(tid):
             abort(400)          # un mio titolo si toglie con «rimuovi», non si nasconde
@@ -541,7 +553,10 @@ def scheda_azione(tipo, tmdb_id):
             c().execute("DELETE FROM consigliati WHERE titolo_id=?", (tid,))
     else:
         abort(400)
-    if az not in ("rimuovi", "nascondi"):
+    if az in ("non_ce", "ce_di_nuovo"):
+        if mio(tid):
+            logica.sincronizza_da_vedere(c(), oggi(), solo=tid)    # un servizio in meno puo' cambiare cosa c'e' da vedere
+    elif az not in ("rimuovi", "nascondi"):
         # qualunque scelta che lo rende mio vince su un «non mi interessa» di prima
         c().execute("DELETE FROM nascosti WHERE titolo_id=?", (tid,))
         if az == "lista":
@@ -719,7 +734,7 @@ def abbonamenti():
         if s["stato"] == "attivo" and s["prezzo"] and not logica.in_pausa(s, o):
             mensile += s["prezzo"] / (12 if s["ciclo"] == "anno" else 1)
     return render_template("abbonamenti.html", servizi=servizi, consigli=consigli, mensile=mensile, o=o,
-                           in_pausa=lambda s: logica.in_pausa(s, o))
+                           in_pausa=lambda s: logica.in_pausa(s, o), programmata=lambda s: logica.pausa_programmata(s, o))
 
 
 @app.route("/piano", methods=["GET", "POST"])
@@ -763,12 +778,15 @@ def abbonamento_salva(sid):
     ciclo = request.form.get("ciclo")
     if stato not in ("attivo", "disdetto", "mai", "pausa") or ciclo not in ("mese", "anno"):
         abort(400)
-    pausa_fino = proroghe = None
+    pausa_fino = pausa_dal = proroghe = None
     if stato == "pausa":
-        # la pausa e' un «attivo» che non costa fino a quel giorno, poi riparte e addebita
-        pausa_fino = campo_data("pausa_fino")
-        if not pausa_fino or pausa_fino <= oggi().isoformat():
+        # la pausa e' un «attivo» che non costa fino a quel giorno, poi riparte e addebita;
+        # con «dal» nel futuro e' chiesta per il rinnovo, e fino ad allora si guarda
+        pausa_fino, pausa_dal = campo_data("pausa_fino"), campo_data("pausa_dal")
+        if not pausa_fino or pausa_fino <= oggi().isoformat() or (pausa_dal and pausa_dal >= pausa_fino):
             abort(400)
+        if pausa_dal and pausa_dal <= oggi().isoformat():
+            pausa_dal = None                                      # gia' cominciata
         proroghe = request.form.get("pausa_proroghe", type=int)
         proroghe = proroghe if proroghe is not None and 0 <= proroghe < 10 else None    # vuoto = non si sa
         stato = "attivo"
@@ -783,10 +801,12 @@ def abbonamento_salva(sid):
         fine = (logica.data(campo_data("rinnovo")) - dt.timedelta(days=1)).isoformat()
     conserva = request.form.get("conserva_mesi", type=int)
     pulito = lambda k, n: re.sub(r"[\x00-\x1f\x7f]", " ", request.form.get(k, "")).strip()[:n] or None
+    durate = sorted({int(x) for x in re.split(r"[,\s]+", request.form.get("pausa_durate", "")) if x.isdigit() and 0 < int(x) <= 366})
     c().execute("""UPDATE servizi SET stato=?, prezzo=?, ciclo=?, rinnovo=?, fine=?, canale=?, conserva_mesi=?, note=?,
-                   pausa_fino=?, pausa_proroghe=? WHERE id=?""",
+                   pausa_fino=?, pausa_dal=?, pausa_proroghe=?, pausa_durate=? WHERE id=?""",
                 (stato, prezzo, ciclo, pausa_fino or campo_data("rinnovo"), fine, pulito("canale", 60),
-                 conserva if conserva and 0 < conserva < 120 else None, pulito("note", 300), pausa_fino, proroghe, sid))
+                 conserva if conserva and 0 < conserva < 120 else None, pulito("note", 300), pausa_fino, pausa_dal, proroghe,
+                 ",".join(map(str, durate)) or None, sid))
     c().commit()
     log(f"abbonamento {sid}: stato {stato} da {session.get('nome')}")
     return redirect(url_for("abbonamenti") + f"#s{sid}")
@@ -801,18 +821,27 @@ def abbonamento_fatto(sid):
         abort(404)
     az, o = request.form.get("azione"), oggi()
     pausa = logica.in_pausa(s, o)
+    programmata = logica.pausa_programmata(s, o)
     fino = campo_data("fino")
     if az == "disdetto" and s["stato"] == "attivo":
-        # disdetto durante la pausa: finisce subito (in pausa non si usa comunque)
-        fine = o if pausa else logica.data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else o
-        c().execute("UPDATE servizi SET stato='disdetto', fine=?, pausa_fino=NULL WHERE id=?", (max(fine, o).isoformat(), sid))
-    elif az == "pausa" and s["stato"] == "attivo" and not pausa:
-        if not fino or fino <= o.isoformat():
+        # disdetto durante la pausa: finisce subito (in pausa non si usa comunque);
+        # con la pausa solo chiesta, resta pagato fino al giorno prima
+        fine = o if pausa else logica.data(s["pausa_dal"]) - dt.timedelta(days=1) if programmata \
+            else logica.data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else o
+        c().execute("UPDATE servizi SET stato='disdetto', fine=?, pausa_fino=NULL, pausa_dal=NULL WHERE id=?",
+                    (max(fine, o).isoformat(), sid))
+    elif az == "pausa" and s["stato"] == "attivo" and not logica.pausa_chiesta(s, o):
+        # Netflix e Disney+ mettono in pausa dal rinnovo: fino ad allora si guarda
+        dal = s["rinnovo"] if s["rinnovo"] and s["rinnovo"] > o.isoformat() else None
+        if not fino or fino <= max(o.isoformat(), dal or ""):
             abort(400)
         n = request.form.get("proroghe", type=int)
-        c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=? WHERE id=?",
-                    (fino, fino, n if n is not None and 0 <= n < 10 else None, sid))
-    elif az == "prolungata" and pausa:
+        c().execute("UPDATE servizi SET pausa_fino=?, pausa_dal=?, rinnovo=?, pausa_proroghe=? WHERE id=?",
+                    (fino, dal, fino, n if n is not None and 0 <= n < 10 else None, sid))
+    elif az == "ripreso" and programmata:
+        # pausa annullata prima che cominci: si rinnova come prima
+        c().execute("UPDATE servizi SET rinnovo=pausa_dal, pausa_fino=NULL, pausa_dal=NULL WHERE id=?", (sid,))
+    elif az == "prolungata" and (pausa or programmata):
         if not fino or fino <= s["pausa_fino"]:
             abort(400)
         c().execute("UPDATE servizi SET pausa_fino=?, rinnovo=?, pausa_proroghe=CASE WHEN pausa_proroghe IS NULL THEN NULL ELSE MAX(pausa_proroghe - 1, 0) END WHERE id=?",
@@ -842,7 +871,15 @@ def impostazioni():
                               FROM provider p ORDER BY p.servizio_id IS NULL, p.priorita, p.nome""").fetchall()
     nascosti = c().execute("""SELECT t.* FROM nascosti n JOIN titoli t ON t.id=n.titolo_id
                               ORDER BY n.quando DESC, t.titolo""").fetchall()
-    return render_template("impostazioni.html", servizi=servizi, provider=provider, nascosti=nascosti)
+    registro = db.DATI / db.GIRO_LOG
+    try:
+        righe = registro.read_text(errors="replace").splitlines()[-6:] if registro.exists() else []
+        lanciato = dt.datetime.fromtimestamp(registro.stat().st_mtime) if registro.exists() else None
+    except OSError:
+        righe, lanciato = [], None
+    return render_template("impostazioni.html", servizi=servizi, provider=provider, nascosti=nascosti,
+                           ultimo_giro=db.meta(c(), "ultimo_giro"), in_corso=db.giro_in_corso(),
+                           registro=righe, lanciato=lanciato)
 
 
 @app.route("/impostazioni", methods=["POST"])
@@ -851,6 +888,18 @@ def impostazioni_salva():
     if az == "seguito":
         sid = request.form.get("servizio", type=int)
         c().execute("UPDATE servizi SET seguito=1-seguito WHERE id=?", (sid,))
+    elif az == "aggiorna":
+        # il giro notturno, adesso: in un processo a parte (dura minuti), con
+        # l'uscita in un file che la pagina mostra. Il lucchetto in aggiorna.py
+        # impedisce due giri insieme
+        if not db.giro_in_corso():
+            import subprocess
+            with open(db.DATI / db.GIRO_LOG, "w") as uscita:
+                subprocess.Popen([sys.executable, "-u", str(pathlib.Path(__file__).resolve().parent / "aggiorna.py")],
+                                 stdout=uscita, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                 start_new_session=True, cwd=str(pathlib.Path(__file__).resolve().parent))
+            log(f"giro lanciato dalla pagina da {session.get('nome')}")
+            time.sleep(1)       # il tempo di prendere il lucchetto: la pagina dopo dice «in corso»
     elif az == "mappa":
         pid = request.form.get("provider", type=int)
         sid = request.form.get("servizio", type=int) or None
@@ -869,7 +918,7 @@ def impostazioni_salva():
     else:
         abort(400)
     c().commit()
-    return redirect(url_for("impostazioni"))
+    return redirect(url_for("impostazioni") + ("#aggiorna" if az == "aggiorna" else ""))
 
 
 # --- importazione da JustWatch ------------------------------------------------

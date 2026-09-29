@@ -4,6 +4,22 @@
 {% block corpo %}
 <h1 class="pagina-titolo">Impostazioni</h1>
 
+<section id="aggiorna">
+  <h2 class="sezione-titolo">Aggiornamento dei dati</h2>
+  <p class="nota">Ogni notte alle 05:30 Palinsesto riscarica schede, servizi, arrivi e consigli (e alle 08:30 riprova, se di notte non ci è riuscito). Qui lo fai partire adesso: dura qualche minuto, e le notifiche arrivano come di notte.</p>
+  <p>Ultimo giro concluso: <b>{{ ultimo_giro[:16].replace('T', ' alle ') if ultimo_giro else 'mai' }}</b></p>
+  {% if in_corso %}
+  <p class="avviso-giro">Un giro è in corso{% if lanciato %} (lanciato alle {{ lanciato.strftime('%H:%M') }}){% endif %}. <a href="{{ url_for('impostazioni') }}#aggiorna">Ricarica</a> per vedere a che punto è.</p>
+  {% else %}
+  <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="aggiorna">
+    <button class="primario">Aggiorna adesso</button></form>
+  {% endif %}
+  {% if registro %}
+  <details class="riquadro"{% if in_corso %} open{% endif %}><summary>Ultime righe del giro lanciato da qui{% if lanciato %} ({{ lanciato.strftime('%d/%m %H:%M') }}){% endif %}</summary>
+    <pre class="registro">{{ registro|join('\n') }}</pre></details>
+  {% endif %}
+</section>
+
 <section>
   <h2 class="sezione-titolo">Servizi seguiti</h2>
   <p class="nota">Un servizio seguito compare in «Conviene?», nelle novità e negli avvisi di arrivo e partenza.</p>

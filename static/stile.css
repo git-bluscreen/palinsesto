@@ -342,3 +342,13 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 .azioni-piano details.pausa > summary::-webkit-details-marker { display: none; }
 .azioni-piano details.pausa[open] { flex-basis: 100%; }
 .modulo-pausa { display: grid; gap: .5rem; margin-top: .5rem; max-width: 320px; }
+
+/* «non c'e' davvero»: la riga resta, barrata, con il modo di tornare indietro */
+.dove li.corretto .riga-dove { opacity: .55; }
+.dove li.corretto .riga-dove b { text-decoration: line-through; }
+.dove li:has(.correggi) { flex-wrap: wrap; row-gap: 0; }
+.dove .correggi { flex-basis: 100%; text-align: right; margin: 0; }
+.dove .correggi button { font-size: .75rem; }
+
+.registro { white-space: pre-wrap; font-size: .75rem; margin: .5rem 0 0; color: var(--tenue); }
+.avviso-giro { color: var(--accento); }

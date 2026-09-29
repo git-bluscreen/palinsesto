@@ -38,6 +38,10 @@ PREDEFINITI = [
     ("Apple TV+",    5, {350},                ("apple tv plus", "apple tv+")),
     ("Paramount+",   6, {531, 582, 1853},     ("paramount plus", "paramount+")),
 ]
+# durate di pausa concesse, in giorni (cercato il 29/09; si correggono da
+# Abbonamenti): Netflix un mese, prorogabile fino a tre; Disney+ in Italia 2, 4 o
+# 8 settimane. Tutte e due partono dal rinnovo. NOW, Apple TV+, Paramount+: no
+PAUSE = {"Netflix": "30,60,90", "Disney+": "14,28,56"}
 GIORNI_PROVIDER = 7
 GIORNI_CATALOGO = 540      # «recenti»: usciti negli ultimi 18 mesi
 PAGINE_CATALOGO = 5        # 20 titoli a pagina, per tipo e per servizio
@@ -64,8 +68,8 @@ def aggiorna_provider(c, api, oggi):
     if not c.execute("SELECT 1 FROM servizi").fetchone():
         for nome, ordine, ids, prefissi in PREDEFINITI:
             princ = next((visti[i] for i in sorted(ids) if i in visti), None)
-            cur = c.execute("INSERT INTO servizi (nome, ordine, logo) VALUES (?,?,?)",
-                            (nome, ordine, princ.get("logo_path") if princ else None))
+            cur = c.execute("INSERT INTO servizi (nome, ordine, logo, pausa_durate) VALUES (?,?,?,?)",
+                            (nome, ordine, princ.get("logo_path") if princ else None, PAUSE.get(nome)))
             sid = cur.lastrowid
             for p in visti.values():
                 n = p["provider_name"].lower()
@@ -240,6 +244,17 @@ def main():
     except FileNotFoundError:
         log(f"giro FALLITO: manca la chiave TMDB in {tmdb.CONF / 'tmdb'}")
         sys.exit(1)
+    # un giro alla volta: timer delle 05:30, recupero delle 08:30 e tasto della
+    # pagina possono incrociarsi. Il lucchetto si libera da solo quando il
+    # processo finisce, anche se muore
+    import fcntl
+    lucchetto = open(file.parent / db.GIRO_LOCK, "a")
+    try:
+        fcntl.flock(lucchetto, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log("un giro e' gia' in corso: questo non parte")
+        sys.exit(0)
+
     c = db.apri(file)
 
     if o.recupero:

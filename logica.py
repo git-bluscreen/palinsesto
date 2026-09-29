@@ -23,9 +23,25 @@ GIORNI_CRONOLOGIA = 30     # avviso prima che un servizio cancelli la cronologia
 
 
 def in_pausa(s, oggi):
-    """In pausa: attivo sulla carta, ma non si usa e non costa fino a `pausa_fino`,
-    quando riparte da solo e addebita."""
+    """In pausa adesso: attivo sulla carta, ma non si usa e non costa fino a
+    `pausa_fino`, quando riparte da solo e addebita. Una pausa chiesta comincia
+    al rinnovo (`pausa_dal`): fino ad allora il servizio si usa normalmente."""
+    return pausa_chiesta(s, oggi) and not (s["pausa_dal"] and data(s["pausa_dal"]) > oggi)
+
+
+def pausa_chiesta(s, oggi):
+    """Una pausa in corso o gia' chiesta per il prossimo rinnovo."""
     return bool(s["stato"] == "attivo" and s["pausa_fino"] and data(s["pausa_fino"]) > oggi)
+
+
+def pausa_programmata(s, oggi):
+    """Chiesta ma non ancora cominciata: il servizio e' pagato fino al giorno prima."""
+    return pausa_chiesta(s, oggi) and not in_pausa(s, oggi)
+
+
+def durate_pausa(s):
+    """Durate di pausa concesse dal servizio, in giorni, dalla piu' corta."""
+    return sorted({int(x) for x in (s["pausa_durate"] or "").split(",") if x.strip().isdigit() and 0 < int(x) <= 366})
 
 
 def iso(d):
@@ -55,12 +71,13 @@ def evento(c, chiave, tipo, testo, oggi, titolo_id=None, servizio_id=None, notif
     return cur.rowcount == 1
 
 
-def servizi_disponibili(c, titolo_id):
+def servizi_disponibili(c, titolo_id, grezzi=False):
     """{servizio_id: nome} dove il titolo si vede con un abbonamento, adesso."""
     q = f"""SELECT DISTINCT s.id, s.nome FROM disponibilita d
             JOIN provider p ON p.id = d.provider_id JOIN servizi s ON s.id = p.servizio_id
             WHERE d.titolo_id = ? AND d.fino IS NULL AND d.offerta IN ({",".join("?" * len(ABBONAMENTO))})
-            AND s.seguito = 1"""
+            AND s.seguito = 1""" + ("" if grezzi else """
+            AND NOT EXISTS (SELECT 1 FROM correzioni k WHERE k.titolo_id = d.titolo_id AND k.servizio_id = s.id)""")
     return {r["id"]: r["nome"] for r in c.execute(q, (titolo_id, *ABBONAMENTO))}
 
 
@@ -150,6 +167,12 @@ def salva_scheda(c, api, tipo, tmdb_id, oggi, con_stagioni=True):
                       "AND offerta=? AND fino IS NULL",
                       (n, iso(oggi), iso(oggi) if n >= ASSENZE_PER_CHIUDERE else None, tid, *k))
     dopo_serv = servizi_disponibili(c, tid)
+    # «non c'e' davvero»: quando TMDB smette di dirlo, la correzione ha finito il
+    # suo lavoro e si toglie; se un giorno arriva davvero, e' un arrivo vero
+    grezzi = servizi_disponibili(c, tid, grezzi=True)
+    for (k,) in c.execute("SELECT servizio_id FROM correzioni WHERE titolo_id=?", (tid,)).fetchall():
+        if k not in grezzi:
+            c.execute("DELETE FROM correzioni WHERE titolo_id=? AND servizio_id=?", (tid, k))
     for sid in dopo_serv.keys() - prima_serv.keys():
         ev(f"arrivo:{tid}:{sid}:{iso(oggi)}", "arrivo", f"«{nome}» è arrivato su {dopo_serv[sid]}", sid)
     for sid in prima_serv.keys() - dopo_serv.keys():
@@ -330,12 +353,15 @@ def calcola_consigliati(c, api, oggi):
                    for tid, p in grezzi.items() if c.execute("SELECT 1 FROM titoli WHERE id=?", (tid,)).fetchone()])
     serv = {r["id"]: r for r in c.execute("SELECT * FROM servizi WHERE seguito=1")}
     mappa = {r["id"]: r["servizio_id"] for r in c.execute("SELECT id, servizio_id FROM provider WHERE servizio_id IS NOT NULL")}
+    corretti = {}
+    for r in c.execute("SELECT titolo_id, servizio_id FROM correzioni"):
+        corretti.setdefault(r[0], set()).add(r[1])
     tenuti = []
     for tid in [t for t in sorted(punti, key=punti.get, reverse=True) if punti[t] > 0][:CONSIGLI_CANDIDATI]:
         tipo, x = dati[tid]
         it = api.provider_di(tipo, x["id"])
         dove = sorted({mappa[p["provider_id"]] for o in ABBONAMENTO for p in it.get(o, [])
-                       if mappa.get(p["provider_id"]) in serv})
+                       if mappa.get(p["provider_id"]) in serv} - corretti.get(tid, set()))
         if not dove:
             continue
         abbonato = any(serv[d]["stato"] == "attivo" for d in dove)
@@ -474,7 +500,7 @@ def scadenze(c, oggi):
     for s in c.execute("SELECT * FROM servizi").fetchall():
         if s["stato"] == "attivo" and s["pausa_fino"] and data(s["pausa_fino"]) <= oggi:
             # la pausa e' finita: il servizio e' ripartito da solo e ha addebitato
-            c.execute("UPDATE servizi SET pausa_fino=NULL, rinnovo=COALESCE(rinnovo, pausa_fino) WHERE id=?", (s["id"],))
+            c.execute("UPDATE servizi SET pausa_fino=NULL, pausa_dal=NULL, rinnovo=COALESCE(rinnovo, pausa_fino) WHERE id=?", (s["id"],))
             t = f"{s['nome']}: finita la pausa, l'abbonamento è ripartito"
             if evento(c, f"pausa-finita:{s['id']}:{s['pausa_fino']}", "rinnovo", t, oggi, servizio_id=s["id"]):
                 nuovi.append(t)
@@ -518,6 +544,7 @@ def scadenze(c, oggi):
 # lo attivi, non un mese di calendario). Le ipotesi, dette anche nella pagina:
 # una stagione si guarda quando e' completa, tutta di seguito; si guardano al
 # massimo `ore_mese` ore al mese; un servizio gia' pagato si usa per primo.
+PAUSA_SCARTO = 21          # giorni: una pausa che fa ripartire piu' lontano di cosi' da quando serve non conviene
 PIANO_PERIODI = 6
 PIANO_GIORNI = 30
 ORE_MESE = 25              # predefinito: si cambia dalla pagina del piano (meta «ore_mese»)
@@ -647,7 +674,9 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
     for sid, s in serv.items():
         if s["stato"] == "attivo" and in_pausa(s, oggi):
             continue                               # in pausa: non si usa finche' non riparte o si riprende
-        if s["stato"] == "attivo":
+        if pausa_programmata(s, oggi):
+            pagato[sid] = data(s["pausa_dal"]) - dt.timedelta(days=1)   # si guarda fino al giorno prima della pausa
+        elif s["stato"] == "attivo":
             pagato[sid] = data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else per[0][1]
         elif s["stato"] == "disdetto" and s["fine"] and data(s["fine"]) >= oggi:
             pagato[sid] = data(s["fine"])
@@ -717,7 +746,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
             continua = sid in acceso_prima
             aspettato = max(i - v["dal"] for v in mie) >= ATTESA_MAX
             if continua or aspettato or h >= disponibili * .8 or not unire or i == periodi - 1:
-                if in_pausa(s, oggi):
+                if pausa_chiesta(s, oggi):
                     assegna(sid, "riprendi" if ini < data(s["pausa_fino"]) else "rinnova")
                 else:
                     gia = continua or (s["stato"] == "attivo" and i == 0)
@@ -736,16 +765,32 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
     for sid, s in serv.items():
         usi = [p["i"] for p in out for x in p["voci"] if x["s"]["id"] == sid and x["titoli"]]
         pagati = [p["i"] for p in out for x in p["voci"] if x["s"]["id"] == sid and x["azione"] != "pagato"]
-        if in_pausa(s, oggi):
+        if pausa_chiesta(s, oggi):
             pf = data(s["pausa_fino"])
-            prima = [i for i in pagati if per[i][0] < pf]
+
+            def serve_dal(i):
+                """Il giorno in cui serve nel periodo i: quando il primo titolo e' pronto."""
+                pronti_i = [y["pronto"] for x in out[i]["voci"] if x["s"]["id"] == sid for y in x["titoli"]]
+                return max([per[i][0]] + ([min(pronti_i)] if pronti_i else []))
+            # riprendere (o annullare) solo se la pausa finisce troppo dopo quando
+            # serve: se riparte da sola entro PAUSA_SCARTO giorni, si aspetta lei
+            prima = [i for i in pagati if per[i][0] < pf and (pf - serve_dal(i)).days > PAUSA_SCARTO]
             subito = [i for i in pagati if per[i][1] >= pf and i <= periodo_di(pf) + 1]
             dopo = [i for i in pagati if per[i][1] >= pf]
             n = s["pausa_proroghe"]            # None = non si sa (i servizi lo propongono a ridosso, e cambiano)
-            if prima:
+            if prima and pausa_programmata(s, oggi):
+                pd = data(s["pausa_dal"])
+                azioni.append(dict(s=s, tipo="riprendi", quando=pd - dt.timedelta(days=1), pausa=pf, programmata=True,
+                                   testo=f"Annulla la pausa prima del {breve(pd)}: ti serve dal {breve(max(per[prima[0]][0], pd))}"))
+            elif prima:
                 q = max(per[prima[0]][0], oggi)
                 azioni.append(dict(s=s, tipo="riprendi", quando=q, pausa=pf,
                                    testo="Riprendilo dalla pausa adesso" if q == oggi else f"Riprendilo dalla pausa verso il {breve(q)}"))
+            elif pausa_programmata(s, oggi):
+                azioni.append(dict(s=s, tipo="pagato", quando=data(s["pausa_dal"]) - dt.timedelta(days=1), pausa=pf,
+                                   testo=f"Si guarda fino al {breve(data(s['pausa_dal']) - dt.timedelta(days=1))}, "
+                                         f"poi in pausa fino al {breve(pf)}"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
             elif subito:
                 azioni.append(dict(s=s, tipo="tieni", quando=pf, pausa=pf, testo=f"In pausa fino al {breve(pf)}: poi riparte, e ti serve"))
             elif n:
@@ -768,9 +813,31 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
                 azioni.append(dict(s=s, tipo="tieni", quando=r, testo="Tienilo" + (f": al rinnovo del {breve(r)} ti serve ancora" if r else "")))
             else:
                 dopo = next((i for i in pagati if k is not None and i > k), None)
+                # Serve di nuovo piu' avanti e il servizio concede la pausa: meglio
+                # della disdetta, riparte da solo quando serve. Come la disdetta
+                # comincia al rinnovo: i giorni gia' pagati si guardano comunque.
+                # «Quando serve» e' il giorno in cui il primo titolo di quel periodo
+                # e' pronto, non l'inizio del periodo; la durata e' quella che fa
+                # ripartire piu' vicino a quel giorno, entro PAUSA_SCARTO (a parita',
+                # la piu' lunga: si paga dopo). Nessuna abbastanza vicina: disdici.
+                durata = None
+                if dopo is not None and r and durate_pausa(s):
+                    pronti_dopo = [y["pronto"] for x in out[dopo]["voci"] if x["s"]["id"] == sid for y in x["titoli"]]
+                    quando_serve = max([per[dopo][0]] + ([min(pronti_dopo)] if pronti_dopo else []))
+                    serve = (quando_serve - r).days
+                    vicine = sorted(durate_pausa(s), key=lambda d: (abs(d - serve), -d))
+                    durata = vicine[0] if serve > 0 and abs(vicine[0] - serve) <= PAUSA_SCARTO else None
+                if durata:
+                    fino = r + dt.timedelta(days=durata)
+                    azioni.append(dict(s=s, tipo="pausa", quando=r, fino=fino,
+                                       testo=f"Mettilo in pausa prima del {breve(r)}, per {durata} giorni: "
+                                             f"riparte il {breve(fino)}, quando ti serve di nuovo. Fino ad allora si guarda"))
+                    continue
                 testo = (f"Disdici prima del {breve(r)}" if r else "Disdici") + ": fino ad allora resta attivo"
                 if dopo is not None:
                     testo += f"; riattivalo verso il {breve(per[dopo][0])}"
+                    if durate_pausa(s):
+                        testo += " (nessuna pausa concessa lo fa ripartire al momento giusto)"
                 azioni.append(dict(s=s, tipo="disdici", quando=r or oggi, testo=testo))
         elif s["stato"] == "disdetto" and sid in pagato and not pagati:
             testo = f"Già disdetto, attivo fino al {breve(pagato[sid])}"
@@ -784,7 +851,7 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
                                testo="Attivalo adesso" if j == 0 else f"Attivalo verso il {breve(per[j][0])}"))
         elif not usi:
             azioni.append(dict(s=s, tipo="niente", quando=None, testo="Non ti serve nei prossimi sei mesi"))
-    ordine = {"disdici": 0, "proroga": 0, "riprendi": 1, "attiva": 1, "tieni": 2, "pagato": 3, "niente": 4}
+    ordine = {"disdici": 0, "proroga": 0, "pausa": 0, "riprendi": 1, "attiva": 1, "tieni": 2, "pagato": 3, "niente": 4}
     azioni.sort(key=lambda a: (ordine[a["tipo"]], a["quando"] or dt.date.max))
 
     oltre = list(resto)
@@ -825,9 +892,13 @@ def promemoria(c, oggi, p):
     azioni = {a["s"]["id"]: a for a in p["azioni"]}
     for sid, s in serv.items():
         mie = pagati.get(sid, {})
-        if in_pausa(s, oggi):
+        if pausa_chiesta(s, oggi):
             a, pf = azioni[sid], data(s["pausa_fino"])
-            if a["tipo"] == "riprendi":
+            if a["tipo"] == "riprendi" and a.get("programmata"):
+                ev.append(dict(uid=f"riprendi-{sid}", giorno=max(a["quando"], oggi), avviso=2, titolo=f"Annulla la pausa di {s['nome']}",
+                               testo=f"La pausa comincia il {data(s['pausa_dal']).strftime('%d/%m/%Y')}, ma ti serve: "
+                                     f"{', '.join(titoli(mie.values()))}. Annullala, poi segnalo in Palinsesto."))
+            elif a["tipo"] == "riprendi":
                 ev.append(dict(uid=f"riprendi-{sid}", giorno=a["quando"], avviso=0, titolo=f"Riprendi {s['nome']} dalla pausa",
                                testo=f"Da guardare: {', '.join(titoli(mie.values()))}. Poi segnalo in Palinsesto: «L'ho ripreso oggi»."))
             elif a["tipo"] == "proroga":
@@ -845,6 +916,13 @@ def promemoria(c, oggi, p):
             else:
                 ev.append(dict(uid=f"riparte-{sid}", giorno=pf, avviso=0, titolo=f"{s['nome']} riparte dalla pausa",
                                testo=f"Finisce la pausa e riparte l'abbonamento: ti serve per {', '.join(titoli(mie.values()))}."))
+            continue
+        if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"] and azioni.get(sid, {}).get("tipo") == "pausa":
+            a, r = azioni[sid], data(s["rinnovo"])
+            ev.append(dict(uid=f"pausa-{sid}", giorno=max(r - dt.timedelta(days=1), oggi), avviso=2,
+                           titolo=f"Metti in pausa {s['nome']}",
+                           testo=f"Al rinnovo del {r.strftime('%d/%m/%Y')} mettilo in pausa fino al {a['fino'].strftime('%d/%m/%Y')} "
+                                 f"(la pausa comincia dal rinnovo: fino ad allora si guarda). Poi segnalo in Palinsesto: «L'ho messo in pausa»."))
             continue
         if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"]:
             r = data(s["rinnovo"])

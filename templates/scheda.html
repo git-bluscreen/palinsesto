@@ -44,24 +44,35 @@
 
   {% if t.trama %}<p class="trama">{{ t.trama }}</p>{% endif %}
 
-  <section>
+  <section id="dove">
     <h2 class="sezione-titolo">Dove lo trovi</h2>
     {% if disp %}
     <ul class="dove">
     {% for d in disp %}
-      <li class="{{ 'seguito' if d.seguito else 'altro' }}">
+      {% set abb = d.sid and d.seguito and d.offerta in ('flatrate', 'free', 'ads') %}
+      <li class="{{ 'seguito' if d.seguito else 'altro' }}{{ ' corretto' if d.corretto }}">
         {% if d.sid %}<a class="riga-dove" href="{{ url_for('servizio', sid=d.sid) }}">{% else %}<span class="riga-dove">{% endif %}
         {% if d.plogo %}<img src="{{ img(d.plogo, 'w92') }}" alt="" width="36" height="36">{% endif %}
         <span><b>{{ d.servizio or d.provider }}</b>
           {% if d.servizio and d.provider != d.servizio %}<small>{{ d.provider }}</small>{% endif %}
-          <small>{{ offerte[d.offerta] }} · dal {{ d.dal|gm }}</small></span>
-        {% if d.sid and d.offerta in ('flatrate', 'free', 'ads') %}
+          <small>{% if d.corretto %}secondo TMDB {{ offerte[d.offerta] }}, ma hai segnalato che non c'è{% else %}{{ offerte[d.offerta] }} · dal {{ d.dal|gm }}{% endif %}</small></span>
+        {% if abb and not d.corretto %}
           {% if abbonato(d) %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta non-abbonato">non abbonato</span>{% endif %}
         {% endif %}
         {% if d.sid %}<span class="freccia" aria-hidden="true">›</span></a>{% else %}</span>{% endif %}
+        {% if abb %}
+          {% if d.corretto %}
+          <form method="post" class="in-riga correggi"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="ce_di_nuovo"><input type="hidden" name="servizio" value="{{ d.sid }}">
+            <button class="collegamento">c'è di nuovo</button></form>
+          {% else %}
+          <form method="post" class="in-riga correggi conferma" data-conferma="«{{ t.titolo }}» non è davvero su {{ d.servizio }}? Palinsesto lo ignorerà per questo titolo (piano, consigli, avvisi) finché TMDB smette di elencarlo."><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="non_ce"><input type="hidden" name="servizio" value="{{ d.sid }}">
+            <button class="collegamento tenue-link">non c'è davvero</button></form>
+          {% endif %}
+        {% endif %}
       </li>
     {% endfor %}
     </ul>
+    <p class="nota">I servizi vengono da TMDB, che li prende da JustWatch, e a volte sbagliano. Se un titolo non c'è davvero, «non c'è davvero» lo toglie da quel servizio finché la fonte si corregge.</p>
     {% else %}
     <p class="vuoto">In Italia non risulta su nessun servizio di streaming, né a noleggio.</p>
     {% endif %}

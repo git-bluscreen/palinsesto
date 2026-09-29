@@ -18,6 +18,23 @@ import os, pathlib, sqlite3
 
 DATI = pathlib.Path(os.environ.get("PALINSESTO_DATI", pathlib.Path.home() / ".local/share/palinsesto"))
 FILE = DATI / "palinsesto.db"
+GIRO_LOCK = "giro.lock"          # accanto al database: un giro alla volta (timer, recupero, tasto)
+GIRO_LOG = "giro-manuale.log"    # l'uscita del giro lanciato dalla pagina
+
+
+def giro_in_corso(cartella=None):
+    """True se un giro tiene il lucchetto adesso (senza prenderlo)."""
+    import fcntl
+    f = pathlib.Path(cartella or DATI) / GIRO_LOCK
+    if not f.exists():
+        return False
+    with open(f, "a") as h:
+        try:
+            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(h, fcntl.LOCK_UN)
+        return False
 ASSENZE_PER_CHIUDERE = 2
 
 SCHEMA = """
@@ -39,7 +56,9 @@ CREATE TABLE IF NOT EXISTS servizi (
   conserva_mesi INTEGER, -- mesi di cronologia conservata dopo la fine: da verificare, mai inventati
   note TEXT,
   pausa_fino TEXT,       -- in pausa fino a (stato resta 'attivo': quel giorno riparte e addebita)
-  pausa_proroghe INTEGER -- proroghe della pausa ancora possibili, se il servizio le concede
+  pausa_proroghe INTEGER, -- proroghe della pausa ancora possibili, se il servizio le concede
+  pausa_dal TEXT,        -- la pausa comincia al rinnovo, non quando la chiedi: fino ad allora si guarda
+  pausa_durate TEXT      -- durate di pausa che il servizio concede, in giorni ('30,60,90'); vuoto = niente pausa
 );
 
 CREATE TABLE IF NOT EXISTS provider (
@@ -167,6 +186,16 @@ CREATE TABLE IF NOT EXISTS in_arrivo (
   PRIMARY KEY (servizio_id, titolo_id)
 );
 
+-- «Non c'e' davvero»: TMDB (da JustWatch) dice che un titolo e' su un servizio, ma
+-- non e' vero. Quel servizio si ignora per quel titolo finche' TMDB smette di
+-- dirlo: allora la correzione si toglie da sola, e un arrivo vero torna a contare
+CREATE TABLE IF NOT EXISTS correzioni (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  servizio_id INTEGER REFERENCES servizi(id) ON DELETE CASCADE,
+  quando TEXT,
+  PRIMARY KEY (titolo_id, servizio_id)
+);
+
 -- «Non mi interessa»: mai piu' fra i consigliati ne' fra gli arrivi, e
 -- insegna: chi gli somiglia perde punti
 CREATE TABLE IF NOT EXISTS nascosti (
@@ -224,6 +253,16 @@ def migra(c):
     if "pausa_fino" not in serv:
         c.execute("ALTER TABLE servizi ADD COLUMN pausa_fino TEXT")
         c.execute("ALTER TABLE servizi ADD COLUMN pausa_proroghe INTEGER")
+        c.commit()
+    serv = {r[1] for r in c.execute("PRAGMA table_info(servizi)")}
+    if "pausa_dal" not in serv:
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_dal TEXT")
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_durate TEXT")
+        # cercato il 29/09: Netflix un mese alla volta, prorogabile fino a tre;
+        # Disney+ in Italia 2, 4 o 8 settimane (dove la concede). Dal rinnovo, per
+        # tutti e due. Si correggono da Abbonamenti se cambiano
+        c.execute("UPDATE servizi SET pausa_durate='30,60,90' WHERE nome='Netflix' AND pausa_durate IS NULL")
+        c.execute("UPDATE servizi SET pausa_durate='14,28,56' WHERE nome='Disney+' AND pausa_durate IS NULL")
         c.commit()
     if not meta(c, "lista_da_vedere"):
         r = c.execute("SELECT id FROM liste WHERE nome='Da vedere'").fetchone() or \
