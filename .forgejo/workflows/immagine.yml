@@ -1,0 +1,76 @@
+# Costruisce l'immagine del contenitore, la collauda e la pubblica.
+#
+# Parte con un tag «v*» (per esempio v2026.09.29: immagine «2026.09.29» e «latest»,
+# su tutti i registri) o a mano (Actions -> immagine -> Esegui: immagine «prova»,
+# solo sul registro 1, che di solito e' quello privato). Non usa azioni
+# scaricate da fuori: solo comandi, su un runner con etichetta «podman» che ha
+# Podman e git.
+#
+# Dove pubblicare lo decide chi ospita il repository, senza toccare questo file:
+#   variabili  REGISTRO_1_IMMAGINE  es. registro.example.org/utente/palinsesto
+#              REGISTRO_1_UTENTE
+#              REGISTRO_2_IMMAGINE, REGISTRO_2_UTENTE   (facoltativi)
+#   segreti    REGISTRO_1_TOKEN, REGISTRO_2_TOKEN       (permesso di scrivere pacchetti)
+# Un registro senza immagine configurata si salta.
+name: immagine
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  immagine:
+    runs-on: podman
+    env:
+      IMMAGINE_1: ${{ vars.REGISTRO_1_IMMAGINE }}
+      UTENTE_1: ${{ vars.REGISTRO_1_UTENTE }}
+      TOKEN_1: ${{ secrets.REGISTRO_1_TOKEN }}
+      IMMAGINE_2: ${{ vars.REGISTRO_2_IMMAGINE }}
+      UTENTE_2: ${{ vars.REGISTRO_2_UTENTE }}
+      TOKEN_2: ${{ secrets.REGISTRO_2_TOKEN }}
+      TOKEN_CODICE: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: codice
+        run: |
+          set -eu
+          rm -rf src
+          git clone --quiet --depth 1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN_CODICE}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git" src
+          git -C src log -1 --format='%h %s'
+
+      - name: costruzione
+        run: |
+          set -eu
+          # --network=host: nei container LXC non privilegiati manca /dev/net/tun
+          podman build --network=host --pull=always -t palinsesto:costruita src
+
+      - name: collaudi dentro l'immagine
+        run: |
+          set -eu
+          podman run --rm --network=host palinsesto:costruita python3 prova.py | tail -1
+
+      - name: pubblicazione
+        run: |
+          set -eu
+          if [ "$GITHUB_REF_TYPE" = tag ]; then TAGS="${GITHUB_REF_NAME#v} latest"; else TAGS="prova"; fi
+          pubblica() {   # $1 immagine, $2 utente, $3 token
+            [ -n "$1" ] || return 0
+            [ -n "$2" ] && [ -n "$3" ] || { echo "$1: manca utente o token, salto"; return 0; }
+            printf '%s' "$3" | podman login --username "$2" --password-stdin "${1%%/*}" >/dev/null
+            for t in $TAGS; do
+              podman tag palinsesto:costruita "$1:$t"
+              podman push --quiet "$1:$t"
+              echo "pubblicata: $1:$t"
+            done
+            podman logout "${1%%/*}" >/dev/null
+          }
+          pubblica "$IMMAGINE_1" "$UTENTE_1" "$TOKEN_1"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then pubblica "$IMMAGINE_2" "$UTENTE_2" "$TOKEN_2"; fi
+
+      - name: pulizia
+        if: always()
+        run: |
+          rm -rf src
+          # le immagini costruite e i loro nomi nei registri; la base (python) resta, per la volta dopo
+          podman images --format '{{.Repository}}:{{.Tag}}' | grep -E '(^|/)palinsesto:' | xargs -r podman rmi -f >/dev/null || true
+          podman image prune -f >/dev/null || true
