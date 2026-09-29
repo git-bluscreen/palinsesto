@@ -1,12 +1,12 @@
 [Unit]
-Description=Palinsesto: giro notturno (schede, disponibilita', novita', avvisi)
+Description=Palinsesto: recupero del giro notturno (solo se quello delle 05:30 non si e' concluso)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 User=palinsesto
-ExecStart=/usr/bin/python3 /home/palinsesto/palinsesto/aggiorna.py
+ExecStart=/usr/bin/python3 /home/palinsesto/palinsesto/aggiorna.py --recupero
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

@@ -18,7 +18,7 @@ L'esito finisce nel journal (riga «giro concluso» o «giro FALLITO»): e' quel
 che un domani sorvegliera' il watchdog. Esce con 1 se piu' di meta' delle
 schede non si e' potuta scaricare.
 """
-import argparse, datetime as dt, json, os, pathlib, shutil, sys, tempfile
+import argparse, datetime as dt, json, os, pathlib, shutil, sys, tempfile, time
 
 import requests
 
@@ -206,12 +206,22 @@ def notifica(c, novita, prova):
     c.execute("UPDATE eventi SET notificato=1 WHERE tipo='catalogo' AND notificato=0")
 
 
+PROVE_RETE, PAUSA_RETE = 5, 150    # 5 tentativi a 2,5 minuti: ~10 minuti, dentro i 30 di systemd
+ERRORI_DI_FILA = 5
+# rete giu': l'unita' systemd lo accetta come uscita riuscita (SuccessExitStatus),
+# cosi' il controllo delle unita' fallite del watchdog non suona di notte; il
+# giro fallito lo racconta la riga «giro FALLITO», che legge il controllo 50
+RETE_GIU = 75      # EX_TEMPFAIL
+
+
 def main():
     a = argparse.ArgumentParser()
     a.add_argument("--prova", action="store_true")
     a.add_argument("--oggi")
     a.add_argument("--senza-catalogo", action="store_true")
     a.add_argument("--db")
+    a.add_argument("--recupero", action="store_true",
+                   help="giro delle 08:30: parte solo se quello delle 05:30 di oggi non e' concluso")
     o = a.parse_args()
     if o.oggi and not o.prova:
         sys.exit("--oggi solo insieme a --prova")
@@ -232,21 +242,53 @@ def main():
         sys.exit(1)
     c = db.apri(file)
 
+    if o.recupero:
+        # il recupero non scrive «giro concluso» se non fa niente: per il watchdog
+        # conta la riga del giro vero, non questa
+        fatto = db.meta(c, "ultimo_giro") or ""
+        if fatto[:10] == oggi.isoformat():
+            log(f"recupero: il giro di oggi e' gia' concluso ({fatto[11:16]}), niente da fare")
+            sys.exit(0)
+        log("recupero: il giro di stanotte non si e' concluso, lo rifaccio adesso")
+
+    # TMDB raggiungibile? Con la rete giu' ogni scheda aspetterebbe i suoi
+    # tentativi e systemd ucciderebbe il giro dopo 30 minuti senza una riga
+    # finale (29/09): meglio accorgersene alla prima chiamata e dirlo.
+    for prova_rete in range(PROVE_RETE):
+        try:
+            api.get("/configuration")
+            break
+        except tmdb.ErroreTMDB as e:
+            if prova_rete == PROVE_RETE - 1:
+                log(f"giro FALLITO: TMDB non raggiungibile da {PROVE_RETE * PAUSA_RETE // 60} minuti ({e}), "
+                    + ("si riprova domani" if o.recupero else "si riprova alle 08:30"))
+                sys.exit(RETE_GIU)
+            log(f"TMDB non raggiungibile ({e}): riprovo fra {PAUSA_RETE // 60} minuti")
+            time.sleep(PAUSA_RETE)
+
     aggiorna_provider(c, api, oggi); c.commit()
     nuovi = logica.scadenze(c, oggi); c.commit()
 
     miei = [r["titolo_id"] for r in c.execute("SELECT titolo_id FROM miei")]
-    errori = 0
+    errori = di_fila = 0
     for tid in miei:
         tipo, n = tid.split(":")
         try:
             _, ev = logica.salva_scheda(c, api, tipo, int(n), oggi)
             nuovi += ev
             c.commit()
+            di_fila = 0
         except tmdb.ErroreTMDB as e:
             c.rollback()
             errori += 1
+            di_fila += 1
             log(f"scheda {tid}: {e}")
+            if di_fila >= ERRORI_DI_FILA:
+                # la rete e' caduta a giro iniziato: fermarsi con una riga finale
+                # invece di finire ucciso da systemd
+                log(f"giro FALLITO: {di_fila} schede di fila senza risposta da TMDB (rete persa?), "
+                    + ("si riprova domani" if o.recupero else "si riprova alle 08:30"))
+                sys.exit(RETE_GIU)
 
     tolti, rimessi = logica.sincronizza_da_vedere(c, oggi); c.commit()
     if tolti or rimessi:
