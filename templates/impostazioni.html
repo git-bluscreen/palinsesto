@@ -66,13 +66,13 @@
 <section id="dispositivi">
   <h2 class="sezione-titolo">Dispositivi · {{ dispositivi|length }}</h2>
   <p class="nota">Dove sei entrato con password e codice. Un dispositivo resta dentro finché apre Palinsesto almeno una volta ogni 30 giorni. «Chiudi» lo fa uscire: al massimo entro {{ durata_accesso }} minuti, il tempo che il suo ultimo token scada.</p>
-  <ul class="elenco-provider">
+  <ul class="elenco-liste elenco-dispositivi">
   {% for d in dispositivi %}
     <li>
-      <span><b>{{ d.nome }}</b>{% if d.id == questo %} <small>· questo</small>{% endif %}<br>
+      <span><b>{{ d.nome }}</b>{% if d.id == questo %} <small>· questo dispositivo</small>{% endif %}<br>
         <small>entrato il {{ d.creato|epoch }} · ultimo uso {{ d.ultimo_uso|epoch }}{% if d.ip %} · {{ d.ip }}{% endif %}</small></span>
       {% if d.id != questo %}
-      <form method="post" class="riga-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="chiudi_dispositivo"><input type="hidden" name="dispositivo" value="{{ d.id }}">
+      <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="chiudi_dispositivo"><input type="hidden" name="dispositivo" value="{{ d.id }}">
         <button class="tenue">Chiudi</button></form>
       {% endif %}
     </li>

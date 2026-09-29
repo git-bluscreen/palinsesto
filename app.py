@@ -972,7 +972,7 @@ def impostazioni():
     return render_template("impostazioni.html", servizi=servizi, provider=provider, nascosti=nascosti,
                            ultimo_giro=db.meta(c(), "ultimo_giro"), in_corso=db.giro_in_corso(),
                            registro=righe, lanciato=lanciato,
-                           dispositivi=accessi.elenco(c()), questo=g.tok["dsp"], durata_accesso=accessi.DURATA_ACCESSO // 60)
+                           dispositivi=sorted(accessi.elenco(c()), key=lambda d: d["id"] != g.tok["dsp"]), questo=g.tok["dsp"], durata_accesso=accessi.DURATA_ACCESSO // 60)
 
 
 @app.route("/impostazioni", methods=["POST"])

@@ -224,6 +224,8 @@ label:has(> input[type=radio]), label:has(> input[type=checkbox]) { cursor: poin
 .riga-form input, .riga-form select { flex: 1; min-width: 0; }
 .nuova-lista { margin-bottom: 2rem; max-width: 480px; }
 .riga-servizio b { flex: 1; }
+.elenco-dispositivi > li > span { flex: 1; min-width: 0; padding: .2rem; }
+.elenco-dispositivi small { display: inline; color: var(--tenue); }
 .filtri { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: 1.25rem; }
 .filtri select { width: auto; flex: 1 1 140px; }
 .spunta-filtro { display: flex; align-items: center; gap: .35rem; color: var(--testo); font-size: .88rem; }
