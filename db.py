@@ -22,19 +22,49 @@ GIRO_LOCK = "giro.lock"          # accanto al database: un giro alla volta (time
 GIRO_LOG = "giro-manuale.log"    # l'uscita del giro lanciato dalla pagina
 
 
+def prendi_lucchetto(f):
+    """Apre il file f e lo blocca senza aspettare: il file aperto (da tenere
+    finche' serve), o None se un altro processo lo tiene gia'. Il lucchetto si
+    libera da solo quando il processo finisce, anche se muore. flock su
+    Linux e macOS, msvcrt su Windows (dove fcntl non esiste)."""
+    h = open(f, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            h.seek(0)
+            msvcrt.locking(h.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        h.close()
+        return None
+    return h
+
+
+def lascia_lucchetto(h):
+    if os.name == "nt":
+        import msvcrt
+        h.seek(0)
+        msvcrt.locking(h.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(h, fcntl.LOCK_UN)
+    h.close()
+
+
 def giro_in_corso(cartella=None):
     """True se un giro tiene il lucchetto adesso (senza prenderlo)."""
-    import fcntl
     f = pathlib.Path(cartella or DATI) / GIRO_LOCK
     if not f.exists():
         return False
-    with open(f, "a") as h:
-        try:
-            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        fcntl.flock(h, fcntl.LOCK_UN)
-        return False
+    h = prendi_lucchetto(f)
+    if h is None:
+        return True
+    lascia_lucchetto(h)
+    return False
+
+
 ASSENZE_PER_CHIUDERE = 2
 
 SCHEMA = """

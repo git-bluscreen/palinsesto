@@ -256,11 +256,8 @@ def main():
     # un giro alla volta: timer delle 05:30, recupero delle 08:30 e tasto della
     # pagina possono incrociarsi. Il lucchetto si libera da solo quando il
     # processo finisce, anche se muore
-    import fcntl
-    lucchetto = open(file.parent / db.GIRO_LOCK, "a")
-    try:
-        fcntl.flock(lucchetto, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
+    lucchetto = db.prendi_lucchetto(file.parent / db.GIRO_LOCK)
+    if lucchetto is None:
         log("un giro e' gia' in corso: questo non parte")
         sys.exit(0)
 
