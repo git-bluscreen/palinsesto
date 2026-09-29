@@ -1,11 +1,62 @@
-// Palinsesto: due comodita', la pagina funziona anche senza.
+// Palinsesto: poche comodita', la pagina funziona anche senza.
+// 0) il token di accesso dura pochi minuti: la pagina ne chiede uno nuovo poco
+//    prima che scada, e subito quando torna in primo piano;
 // 1) conferma prima delle azioni distruttive (form.conferma[data-conferma]);
 // 2) dopo un clic su un interruttore la pagina si ricarica: torna allo stesso punto
 //    invece che in cima, che sul telefono vuol dire perdere il segno.
+const accesso = (() => {
+  const m = document.querySelector('meta[name="pal-restano"]');
+  // il limite si calcola sull'orologio di questo dispositivo: se e' avanti o
+  // indietro rispetto al server non importa
+  let limite = m ? Date.now() + 1000 * Number(m.content) : 0;
+  let timer = null, attesa = null;
+  const ANTICIPO = 60 * 1000;
+  const programma = () => {
+    clearTimeout(timer);
+    timer = setTimeout(rinnova, Math.max(0, limite - Date.now() - ANTICIPO));
+  };
+  function rinnova() {
+    if (attesa) return attesa;              // due richieste insieme ruoterebbero due volte
+    attesa = fetch("/token/rinnova", { method: "POST", credentials: "same-origin", headers: { "X-Palinsesto": "rinnovo" } })
+      .then((r) => {
+        if (r.status === 401) {             // rinnovo scaduto o dispositivo chiuso: di nuovo password e codice
+          location.href = "/accesso?dopo=" + encodeURIComponent(location.pathname + location.search);
+          return false;
+        }
+        if (!r.ok) throw new Error(r.status);
+        return r.json().then((j) => { limite = Date.now() + 1000 * j.restano; programma(); return true; });
+      })
+      .catch(() => {                        // rete assente (fuori casa senza VPN): si riprova, senza buttare fuori
+        clearTimeout(timer);
+        timer = setTimeout(rinnova, 30 * 1000);
+        return false;
+      })
+      .finally(() => { attesa = null; });
+    return attesa;
+  }
+  const daRinnovare = () => !!m && Date.now() > limite - ANTICIPO;
+  if (m) {
+    programma();
+    // in background i timer rallentano o si fermano: al ritorno si controlla subito
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && daRinnovare()) rinnova(); });
+    window.addEventListener("pageshow", (e) => { if (e.persisted && daRinnovare()) rinnova(); });
+  }
+  return { rinnova, daRinnovare };
+})();
 document.addEventListener("submit", (e) => {
   const f = e.target;
-  if (f.classList.contains("conferma") && !confirm(f.dataset.conferma)) {
+  const ripreso = f._pal_ripreso;           // reinviato dopo il rinnovo: la conferma c'e' gia' stata
+  f._pal_ripreso = false;
+  if (!ripreso && f.classList.contains("conferma") && !confirm(f.dataset.conferma)) {
     e.preventDefault();
+    return;
+  }
+  // token di accesso scaduto o quasi (telefono in tasca, scheda dimenticata):
+  // prima si rinnova, poi il modulo parte con lo stesso tasto
+  if (!ripreso && accesso.daRinnovare()) {
+    e.preventDefault();
+    const tasto = e.submitter;
+    accesso.rinnova().then((ok) => { if (ok) { f._pal_ripreso = true; f.requestSubmit(tasto); } });
     return;
   }
   if ((f.method || "").toLowerCase() === "post") {

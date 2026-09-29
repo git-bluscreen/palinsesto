@@ -7,7 +7,7 @@ terminale, come l'utente che fa girare il servizio:
 
 La password si digita senza eco; il segreto TOTP compare UNA volta come QR nel
 terminale, da inquadrare con l'app di autenticazione. Nessuno dei due passa
-da una pagina web o da una chat. Ogni esecuzione chiude le sessioni aperte.
+da una pagina web o da una chat. Ogni esecuzione fa uscire tutti i dispositivi.
 """
 import getpass, hashlib, json, os, pathlib, secrets, sys
 
@@ -57,8 +57,8 @@ fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 os.write(fd, json.dumps({
     "nome": nome, "sale": sale.hex(), "hash": h.hex(), "n": N, "r": R, "p": P,
     "totp": totp,
-    "gen": secrets.token_hex(8),       # cambia a ogni esecuzione: le sessioni vecchie decadono
+    "gen": secrets.token_hex(8),       # cambia a ogni esecuzione: i token vecchi non valgono piu'
 }, indent=1).encode())
 os.close(fd)
 tmp.replace(UTENTE)
-print(f"\nfatto: {UTENTE} (0600). Le sessioni aperte sono state chiuse.")
+print(f"\nfatto: {UTENTE} (0600). Tutti i dispositivi sono usciti.")

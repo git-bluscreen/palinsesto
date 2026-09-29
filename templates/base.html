@@ -9,6 +9,7 @@
 <link rel="apple-touch-icon" href="{{ url_for('marchio', nome='apple-touch-icon.png') }}">
 <link rel="manifest" href="{{ url_for('manifesto') }}">
 <meta name="theme-color" content="#0f1216">
+{% if restano is not none %}<meta name="pal-restano" content="{{ restano }}">{% endif %}
 <link rel="stylesheet" href="{{ url_for('static', filename='stile.css') }}">
 <script src="{{ url_for('static', filename='palinsesto.js') }}" defer></script>
 </head>

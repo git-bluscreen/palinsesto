@@ -485,5 +485,53 @@ atteso("con proxy e rete ammessa", [f"{config.ammesso('192.0.2.10', reti)} {conf
        "True True False https://p.example.org")
 config.FILE.unlink()
 
+# accesso a token: orologio finto, nessun server
+import accessi, base64, json
+ac = db.apri(pathlib.Path(os.environ["PALINSESTO_DATI"]) / "accessi.db")
+K, T0 = "k" * 64, 1_800_000_000
+d, r1 = accessi.entra(ac, "gen1", "Mozilla/5.0 (Linux; Android 14) AppleWebKit Chrome/140 Mobile Safari/537", "10.0.0.2", ora=T0)
+atteso("entra: dispositivo riconosciuto dallo User-Agent", [d["nome"]], "Chrome su Android")
+tk = accessi.firma_accesso(K, d, "prova", ora=T0)
+v = accessi.leggi_accesso(K, tk, "gen1", ora=T0 + 1)
+atteso("token di accesso valido: utente, dispositivo, csrf", [f"{v['sub']} {v['dsp'] == d['id']} {v['csrf'] == d['csrf']}"], "prova True True")
+atteso("...scaduto dopo DURATA_ACCESSO", [str(accessi.leggi_accesso(K, tk, "gen1", ora=T0 + accessi.DURATA_ACCESSO))], "None")
+atteso("...con un'altra gen (utente rifatto) non vale", [str(accessi.leggi_accesso(K, tk, "gen2", ora=T0 + 1))], "None")
+atteso("...firmato con un'altra chiave non vale", [str(accessi.leggi_accesso("x" * 64, tk, "gen1", ora=T0 + 1))], "None")
+b64 = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
+senza_firma = b64({"alg": "none", "typ": "JWT"}) + "." + b64(jwt_dati := dict(accessi.jwt.decode(tk, K, algorithms=["HS256"], options={"verify_exp": False, "verify_iat": False}))) + "."
+atteso("...con alg «none» non vale", [str(accessi.leggi_accesso(K, senza_firma, "gen1", ora=T0 + 1))], "None")
+jwt_dati["exp"] += 3600
+atteso("...con la scadenza allungata a mano non vale", [str(accessi.leggi_accesso(K, tk.rsplit(".", 2)[0] + "." + b64(jwt_dati) + "." + tk.rsplit(".", 1)[1], "gen1", ora=T0 + 1))], "None")
+e, d2, r2 = accessi.rinnova(ac, r1, "gen1", "10.0.0.3", ora=T0 + 540)
+atteso("rinnovo: ok, token nuovo, ultimo uso aggiornato", [f"{e} {r2 != r1} {d2['ultimo_uso'] == T0 + 540} {d2['ip']}"], "ok True True 10.0.0.3")
+e, d3, r3 = accessi.rinnova(ac, r1, "gen1", "10.0.0.3", ora=T0 + 560)
+atteso("stesso token entro la tolleranza (due schede insieme): accesso, nessun token nuovo", [f"{e} {d3 is not None} {r3}"], "gara True None")
+e, d4, r4 = accessi.rinnova(ac, r2, "gen1", "10.0.0.3", ora=T0 + 1080)
+atteso("il token nuovo rinnova ancora", [e], "ok")
+e, _, _ = accessi.rinnova(ac, r1, "gen1", "10.66.0.1", ora=T0 + 1200)
+atteso("token gia' usato ripresentato dopo la tolleranza: riuso", [e], "riuso")
+e, _, _ = accessi.rinnova(ac, r4, "gen1", "10.0.0.3", ora=T0 + 1210)
+atteso("...e il dispositivo e' chiuso: anche il token buono non rinnova piu'", [e], "no")
+atteso("...e non compare fra i dispositivi", [str(len(accessi.elenco(ac)))], "0")
+d, r1 = accessi.entra(ac, "gen1", "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:140.0) Gecko Firefox/140.0", "10.0.0.4", ora=T0)
+atteso("Firefox su Linux", [d["nome"]], "Firefox su Linux")
+e, _, r2 = accessi.rinnova(ac, r1, "gen1", "10.0.0.4", ora=T0 + accessi.DURATA_RINNOVO - 1)
+atteso("rinnovo scorrevole: all'ultimo secondo vale...", [e], "ok")
+e, _, _ = accessi.rinnova(ac, r2, "gen1", "10.0.0.4", ora=T0 + 2 * accessi.DURATA_RINNOVO - 2)
+atteso("...e riparte da li'", [e], "ok")
+e, _, _ = accessi.rinnova(ac, "inventato", "gen1", "10.0.0.4", ora=T0 + 10)
+atteso("token sconosciuto: no", [e], "no")
+d, r1 = accessi.entra(ac, "gen1", "", "10.0.0.5", ora=T0)
+e, _, _ = accessi.rinnova(ac, r1, "gen1", "10.0.0.5", ora=T0 + accessi.DURATA_RINNOVO)
+atteso("fermo per DURATA_RINNOVO: scaduto", [e], "no")
+d, r1 = accessi.entra(ac, "gen1", "", "10.0.0.6", ora=T0)
+e, _, _ = accessi.rinnova(ac, r1, "gen2", "10.0.0.6", ora=T0 + 10)
+atteso("utente rifatto (gen nuova): il rinnovo non vale e chiude il dispositivo",
+       [f"{e} {ac.execute('SELECT chiuso IS NOT NULL FROM dispositivi WHERE id=?', (d['id'],)).fetchone()[0]}"], "no 1")
+atteso("nel database solo impronte dei token, mai i token",
+       [str(ac.execute("SELECT COUNT(*) FROM rinnovi WHERE impronta IN (?,?)", (r1, r2)).fetchone()[0])], "0")
+accessi.pulisci(ac, T0 + 5 * accessi.DURATA_RINNOVO); ac.commit()
+atteso("pulizia: niente resta dopo mesi", [str(ac.execute("SELECT (SELECT COUNT(*) FROM dispositivi) + (SELECT COUNT(*) FROM rinnovi)").fetchone()[0])], "0")
+
 print(f"\n{'TUTTO OK' if not ERRORI else f'{len(ERRORI)} CASI SBAGLIATI'} — database in {db.DATI}")
 sys.exit(1 if ERRORI else 0)

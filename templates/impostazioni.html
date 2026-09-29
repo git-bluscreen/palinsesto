@@ -63,6 +63,27 @@
   {% endif %}
 </section>
 
+<section id="dispositivi">
+  <h2 class="sezione-titolo">Dispositivi · {{ dispositivi|length }}</h2>
+  <p class="nota">Dove sei entrato con password e codice. Un dispositivo resta dentro finché apre Palinsesto almeno una volta ogni 30 giorni. «Chiudi» lo fa uscire: al massimo entro {{ durata_accesso }} minuti, il tempo che il suo ultimo token scada.</p>
+  <ul class="elenco-provider">
+  {% for d in dispositivi %}
+    <li>
+      <span><b>{{ d.nome }}</b>{% if d.id == questo %} <small>· questo</small>{% endif %}<br>
+        <small>entrato il {{ d.creato|epoch }} · ultimo uso {{ d.ultimo_uso|epoch }}{% if d.ip %} · {{ d.ip }}{% endif %}</small></span>
+      {% if d.id != questo %}
+      <form method="post" class="riga-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="chiudi_dispositivo"><input type="hidden" name="dispositivo" value="{{ d.id }}">
+        <button class="tenue">Chiudi</button></form>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  {% if dispositivi|length > 1 %}
+  <form method="post" class="conferma" data-conferma="Far uscire tutti gli altri dispositivi?"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="chiudi_altri">
+    <button class="tenue">Chiudi tutti gli altri</button></form>
+  {% endif %}
+</section>
+
 <section>
   <h2 class="sezione-titolo">Provider TMDB</h2>
   <p class="nota">TMDB distingue le varianti (con pubblicità, canali su Prime Video o Apple TV): qui decidi a quale servizio appartiene ciascuna. «n» è il numero di tuoi titoli visti su quel provider. Da un provider non assegnato puoi creare un servizio nuovo.</p>

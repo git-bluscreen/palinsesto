@@ -245,6 +245,26 @@ CREATE TABLE IF NOT EXISTS somiglianze (
 CREATE INDEX IF NOT EXISTS disp_aperte ON disponibilita(titolo_id) WHERE fino IS NULL;
 CREATE INDEX IF NOT EXISTS eventi_quando ON eventi(quando);
 CREATE INDEX IF NOT EXISTS catalogo_aperti ON catalogo(servizio_id) WHERE fino IS NULL;
+
+-- accesso a token (accessi.py): i dispositivi entrati e l'impronta dei
+-- token di rinnovo, mai i token
+CREATE TABLE IF NOT EXISTS dispositivi (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL,           -- dallo User-Agent, per riconoscerlo in Impostazioni
+  gen TEXT NOT NULL,            -- quella dell'utente all'accesso
+  csrf TEXT NOT NULL,           -- stabile per tutta la vita del dispositivo
+  creato INTEGER NOT NULL,      -- secondi epoch
+  ultimo_uso INTEGER NOT NULL,
+  ip TEXT,
+  chiuso INTEGER                -- epoch della chiusura (uscita, riuso, altro dispositivo)
+);
+CREATE TABLE IF NOT EXISTS rinnovi (
+  impronta TEXT PRIMARY KEY,    -- sha256 del token, mai il token
+  dispositivo TEXT NOT NULL REFERENCES dispositivi(id) ON DELETE CASCADE,
+  scade INTEGER NOT NULL,
+  usato INTEGER
+);
+CREATE INDEX IF NOT EXISTS rinnovi_dispositivo ON rinnovi(dispositivo);
 """
 
 

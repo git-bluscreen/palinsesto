@@ -1,8 +1,9 @@
 # Dipendenze di Palinsesto (pip install -r requirements.txt).
 # Su Debian 13 ci sono tutte come pacchetti: python3-flask python3-waitress
-# python3-pyotp python3-requests python3-qrcode
+# python3-pyotp python3-requests python3-qrcode python3-jwt
 Flask>=3.0
 waitress>=3.0
 pyotp>=2.8
+PyJWT>=2.8
 requests>=2.31
 qrcode>=7.4

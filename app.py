@@ -3,7 +3,8 @@
 e abbonamenti. Pagina web su :45090, pensata dietro un reverse proxy.
 
 Accesso: un solo utente, password (scrypt) + codice TOTP. Credenziali in
-~/.config/palinsesto/utente.json, create con utente.py dal terminale.
+~/.config/palinsesto/utente.json, create con utente.py dal terminale. Dopo
+l'accesso, token brevi e niente sessioni sul server (accessi.py).
 Le richieste sono accettate solo da localhost, dai reverse proxy fidati e dalle
 reti ammesse (config.py): il firewall davanti alla macchina dovrebbe gia'
 garantirlo, questa e' la seconda serratura.
@@ -13,11 +14,11 @@ TMDB e la CSP resta 'self'.
 import datetime as dt, hashlib, hmac, json, os, pathlib, re, secrets, sys, threading, time
 
 import pyotp, requests
-from flask import Flask, abort, g, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, url_for
 
 QUI = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(QUI))
-import calendario, config, db, logica, tmdb
+import accessi, calendario, config, db, logica, tmdb
 
 CONF        = tmdb.CONF
 UTENTE      = CONF / "utente.json"
@@ -28,13 +29,12 @@ RETI        = config.reti_ammesse()   # localhost, i proxy e le reti «ammessi»
 PROVA       = os.environ.get("PALINSESTO_PROVA") == "1"   # solo collaudo: cookie senza Secure
 TENTATIVI   = 5
 BLOCCO_S    = 15 * 60
-DURATA_SESS = dt.timedelta(days=30)   # sul telefono: il codice una volta al mese, non ogni sera
 ORE_SCHEDA  = 24                      # una scheda aperta piu' vecchia di cosi' si riscarica
 MISURE_IMG  = {"w92", "w154", "w185", "w342", "w500", "w780"}
 
 
-def chiave_sessione():
-    f = CONF / "chiave-sessione"
+def chiave_token():
+    f = CONF / "chiave-token"
     if not f.exists():
         CONF.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -42,17 +42,13 @@ def chiave_sessione():
     return f.read_text().strip()
 
 
+CHIAVE      = chiave_token()
+COOKIE      = "palinsesto"            # token di accesso (JWT breve)
+COOKIE_RIN  = "palinsesto_rinnovo"    # token di rinnovo: il browser lo manda solo a /token
+SICURO      = not PROVA and config.solo_https()
+
 app = Flask(__name__)
-app.config.update(
-    SECRET_KEY=chiave_sessione(),
-    SESSION_COOKIE_NAME="palinsesto",
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=not PROVA and config.solo_https(),
-    SESSION_COOKIE_SAMESITE="Lax",        # Lax: il link della notifica ntfy deve aprire la pagina gia' dentro
-    PERMANENT_SESSION_LIFETIME=DURATA_SESS,
-    SESSION_REFRESH_EACH_REQUEST=False,
-    MAX_CONTENT_LENGTH=64 * 1024,
-)
+app.config.update(MAX_CONTENT_LENGTH=64 * 1024)
 
 
 def log(msg):
@@ -126,6 +122,12 @@ def f_gm(s):
     return d.strftime("%d/%m/%Y")
 
 
+@app.template_filter("epoch")
+def f_epoch(x):
+    """secondi epoch -> '29/09 alle 16:44'."""
+    return dt.datetime.fromtimestamp(x).strftime("%d/%m alle %H:%M") if x else ""
+
+
 @app.template_filter("fra")
 def f_fra(s):
     """'fra 3 giorni', 'oggi', 'ieri'..."""
@@ -165,15 +167,49 @@ def f_euro(x):
 def serratura():
     if not config.ammesso(request.remote_addr, RETI):
         abort(403)
-    if request.endpoint in ("accesso", "static", "marchio", "manifesto"):
+    if request.endpoint in ("accesso", "rinnova", "static", "marchio", "manifesto"):
         return
-    if not session.get("dentro") or session.get("gen") != (leggi_utente() or {}).get("gen"):
-        session.clear()
-        return redirect(url_for("accesso", dopo=request.full_path if request.method == "GET" else None))
+    g.tok = accessi.leggi_accesso(CHIAVE, request.cookies.get(COOKIE), (leggi_utente() or {}).get("gen"))
+    if g.tok is None:
+        # token scaduto o assente: si prova il rinnovo e si torna qui. Dopo un
+        # POST si torna alla pagina, se ne ha una: il modulo va rifatto
+        # (palinsesto.js rinnova prima di inviare, quindi succede di rado)
+        dopo = request.full_path if request.method == "GET" else pagina_di(request.path)
+        return redirect(url_for("rinnova", dopo=dopo), 303)
     if request.method == "POST":
         t = request.headers.get("X-CSRF") or request.form.get("csrf", "")
-        if not hmac.compare_digest(t, session.get("csrf", "")):
+        if not hmac.compare_digest(t, g.tok["csrf"]):
             abort(400)
+
+
+def pagina_di(percorso):
+    """percorso se risponde anche a GET, altrimenti la casa."""
+    try:
+        app.url_map.bind("").match(percorso, method="GET")
+        return percorso
+    except Exception:
+        return "/"
+
+
+def dopo_sicuro(dopo):
+    return dopo if dopo and dopo.startswith("/") and not dopo.startswith("//") and "\\" not in dopo else ""
+
+
+def metti_cookie(r, d, rinnovo=None):
+    """Il token di accesso per il dispositivo d e, se c'e', il nuovo token di rinnovo.
+    Lax: il link di una notifica deve aprire la pagina gia' dentro."""
+    r.set_cookie(COOKIE, accessi.firma_accesso(CHIAVE, d, (leggi_utente() or {}).get("nome", "")),
+                 max_age=accessi.DURATA_ACCESSO, httponly=True, secure=SICURO, samesite="Lax")
+    if rinnovo:
+        r.set_cookie(COOKIE_RIN, rinnovo, max_age=accessi.DURATA_RINNOVO, path="/token",
+                     httponly=True, secure=SICURO, samesite="Lax")
+    return r
+
+
+def togli_cookie(r):
+    r.delete_cookie(COOKIE, httponly=True, secure=SICURO, samesite="Lax")
+    r.delete_cookie(COOKIE_RIN, path="/token", httponly=True, secure=SICURO, samesite="Lax")
+    return r
 
 
 @app.after_request
@@ -191,7 +227,9 @@ def intestazioni(r):
 
 @app.context_processor
 def comuni():
-    return dict(csrf=session.get("csrf", ""), nome_utente=session.get("nome"),
+    tok = g.get("tok")
+    return dict(csrf=tok["csrf"] if tok else "", nome_utente=tok["sub"] if tok else None,
+                restano=max(0, tok["exp"] - int(time.time())) if tok else None,
                 offerte=logica.OFFERTE, sezione=request.endpoint)
 
 
@@ -205,9 +243,7 @@ def accesso():
     u = leggi_utente()
     if u is None:
         return render_template("accesso.html", errore=None, senza_utente=True)
-    dopo = request.values.get("dopo") or ""
-    if not dopo.startswith("/") or dopo.startswith("//"):
-        dopo = ""
+    dopo = dopo_sicuro(request.values.get("dopo"))
     if request.method == "GET":
         return render_template("accesso.html", errore=None, dopo=dopo)
     ip = ip_cliente()
@@ -234,18 +270,37 @@ def accesso():
     if not ok:
         log(f"accesso FALLITO da {ip}")
         return render_template("accesso.html", errore="Credenziali o codice non validi.", dopo=dopo), 401
-    session.clear()
-    session.permanent = True
-    session.update(dentro=True, gen=u["gen"], csrf=secrets.token_urlsafe(32), nome=u["nome"])
-    log(f"accesso riuscito: {u['nome']} da {ip}")
-    return redirect(dopo or url_for("casa"))
+    d, rinnovo = accessi.entra(c(), u["gen"], request.headers.get("User-Agent"), ip)
+    log(f"accesso riuscito: {u['nome']} da {ip} ({d['nome']}, dispositivo {d['id'][:6]})")
+    return metti_cookie(redirect(dopo or url_for("casa")), d, rinnovo)
+
+
+@app.route("/token/rinnova", methods=["GET", "POST"])
+def rinnova():
+    """GET: una pagina aperta col token scaduto passa di qui e torna a `dopo`.
+    POST: palinsesto.js, prima che il token scada; risponde con i secondi che restano.
+    Il POST chiede un'intestazione che un altro sito non puo' mandare senza
+    permesso (CORS): il GET al massimo fa ruotare il token, senza darlo a nessuno."""
+    if request.method == "POST" and request.headers.get("X-Palinsesto") != "rinnovo":
+        abort(400)
+    u = leggi_utente()
+    esito, d, nuovo = accessi.rinnova(c(), request.cookies.get(COOKIE_RIN), (u or {}).get("gen"), ip_cliente())
+    if esito == "riuso":
+        log(f"ATTENZIONE: token di rinnovo gia' usato ripresentato da {ip_cliente()}: dispositivo chiuso")
+    if d is None:
+        if request.method == "POST":
+            return togli_cookie(jsonify(errore="accesso scaduto")), 401
+        return togli_cookie(redirect(url_for("accesso", dopo=dopo_sicuro(request.args.get("dopo")) or None)))
+    r = jsonify(restano=accessi.DURATA_ACCESSO) if request.method == "POST" else \
+        redirect(dopo_sicuro(request.args.get("dopo")) or url_for("casa"))
+    return metti_cookie(r, d, nuovo)
 
 
 @app.route("/esci", methods=["POST"])
 def esci():
-    log(f"uscita: {session.get('nome')} da {ip_cliente()}")
-    session.clear()
-    return redirect(url_for("accesso"))
+    accessi.chiudi(c(), g.tok["dsp"])
+    log(f"uscita: {g.tok['sub']} da {ip_cliente()} (dispositivo {g.tok['dsp'][:6]})")
+    return togli_cookie(redirect(url_for("accesso")))
 
 
 # --- copertine ----------------------------------------------------------------
@@ -845,7 +900,7 @@ def abbonamento_salva(sid):
                  conserva if conserva and 0 < conserva < 120 else None, pulito("note", 300), pausa_fino, pausa_dal, proroghe,
                  ",".join(map(str, durate)) or None, sid))
     c().commit()
-    log(f"abbonamento {sid}: stato {stato} da {session.get('nome')}")
+    log(f"abbonamento {sid}: stato {stato} da {g.tok['sub']}")
     return redirect(url_for("abbonamenti") + f"#s{sid}")
 
 
@@ -892,7 +947,7 @@ def abbonamento_fatto(sid):
     else:
         abort(400)
     c().commit()
-    log(f"abbonamento {sid}: {az} da {session.get('nome')}")
+    log(f"abbonamento {sid}: {az} da {g.tok['sub']}")
     try:
         calendario.aggiorna(c(), o)
     except Exception as e:
@@ -916,7 +971,8 @@ def impostazioni():
         righe, lanciato = [], None
     return render_template("impostazioni.html", servizi=servizi, provider=provider, nascosti=nascosti,
                            ultimo_giro=db.meta(c(), "ultimo_giro"), in_corso=db.giro_in_corso(),
-                           registro=righe, lanciato=lanciato)
+                           registro=righe, lanciato=lanciato,
+                           dispositivi=accessi.elenco(c()), questo=g.tok["dsp"], durata_accesso=accessi.DURATA_ACCESSO // 60)
 
 
 @app.route("/impostazioni", methods=["POST"])
@@ -939,8 +995,21 @@ def impostazioni_salva():
                              stdin=subprocess.DEVNULL, start_new_session=True,
                              env=dict(os.environ, PALINSESTO_REGISTRO=str(registro)),
                              cwd=str(pathlib.Path(__file__).resolve().parent))
-            log(f"giro lanciato dalla pagina da {session.get('nome')}")
+            log(f"giro lanciato dalla pagina da {g.tok['sub']}")
             time.sleep(1)       # il tempo di prendere il lucchetto: la pagina dopo dice «in corso»
+    elif az == "chiudi_dispositivo":
+        dsp = request.form.get("dispositivo", "")
+        if dsp == g.tok["dsp"]:
+            abort(400)          # questo si chiude con «Esci»
+        accessi.chiudi(c(), dsp)
+        log(f"dispositivo {dsp[:6]} chiuso dalla pagina da {g.tok['sub']}")
+        return redirect(url_for("impostazioni") + "#dispositivi")
+    elif az == "chiudi_altri":
+        for d in accessi.elenco(c()):
+            if d["id"] != g.tok["dsp"]:
+                accessi.chiudi(c(), d["id"])
+        log(f"altri dispositivi chiusi dalla pagina da {g.tok['sub']}")
+        return redirect(url_for("impostazioni") + "#dispositivi")
     elif az == "mappa":
         pid = request.form.get("provider", type=int)
         sid = request.form.get("servizio", type=int) or None
@@ -1026,6 +1095,6 @@ if __name__ == "__main__":
         import pianificatore
         pianificatore.avvia(log)
     if not config.solo_https():
-        log("ATTENZIONE: PALINSESTO_HTTP=1, sessione anche senza HTTPS: solo in una rete di cui ti fidi")
+        log("ATTENZIONE: PALINSESTO_HTTP=1, token anche senza HTTPS: solo in una rete di cui ti fidi")
     log(f"Palinsesto in ascolto su 0.0.0.0:{PORTA}" + (" (PROVA)" if PROVA else ""))
     serve(app, host="0.0.0.0", port=PORTA, threads=4, ident=None)

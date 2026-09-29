@@ -33,7 +33,12 @@ vengono da [TMDB](https://www.themoviedb.org), che per le disponibilità usa
 [JustWatch](https://www.justwatch.com). Le copertine passano dal server (con una
 cache su disco): il browser non parla mai con TMDB.
 
-Accesso con **un solo utente**, password (scrypt) più codice **TOTP**. Il server
+Accesso con **un solo utente**, password (scrypt) più codice **TOTP**. Dopo
+l'accesso niente sessioni sul server: un **token di accesso** (JWT) che dura 10 minuti
+e che la pagina rinnova da sola poco prima della scadenza, più un **token di rinnovo**
+che si usa una volta sola e vale 30 giorni dall'ultimo uso. Se un token di rinnovo
+già usato si ripresenta, il dispositivo viene chiuso. In Impostazioni l'elenco dei
+dispositivi entrati, ognuno chiudibile. Il server
 accetta connessioni solo da localhost, dai reverse proxy fidati e dalle reti che
 indichi: va messo dietro un reverse proxy con HTTPS.
 
@@ -75,7 +80,7 @@ Per le immagini di applicazioni la funzione è ancora in anteprima tecnica.
 - **`PALINSESTO_AMMESSI`**: le richieste arrivano dal bridge del motore di container,
   non da localhost, e senza questa voce la pagina risponde 403. Docker usa di solito
   `172.16.0.0/12`, Podman `10.88.0.0/16`.
-- **HTTPS**: la sessione vuole HTTPS, quindi davanti serve un reverse proxy. Per
+- **HTTPS**: i cookie dell'accesso vogliono HTTPS, quindi davanti serve un reverse proxy. Per
   provarlo al volo in una rete di cui ti fidi c'è `PALINSESTO_HTTP=1`, da non usare
   su una pagina esposta.
 - Il fuso orario degli orari è `TZ` (predefinito `Europe/Rome`).
@@ -84,7 +89,7 @@ Per le immagini di applicazioni la funzione è ancora in anteprima tecnica.
 
 1. Pacchetti (su Debian 13), oppure `pip install -r requirements.txt`:
    ```
-   apt install python3-flask python3-waitress python3-pyotp python3-requests python3-qrcode
+   apt install python3-flask python3-waitress python3-pyotp python3-requests python3-qrcode python3-jwt
    ```
 2. Un utente dedicato e il codice in `~/palinsesto` di quell'utente (le unità
    systemd in `systemd/` presumono l'utente `palinsesto` e `/home/palinsesto`).

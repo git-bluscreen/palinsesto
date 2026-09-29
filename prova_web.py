@@ -8,7 +8,7 @@
 L'utente di prova e' «prova» / «prova-prova-123» / TOTP JBSWY3DPEHPK3PXP:
 va creato solo nella conf di prova, mai in ~/.config/palinsesto.
 """
-import re, sys, pyotp, requests
+import re, sys, time, pyotp, requests
 
 B = "http://127.0.0.1:45091"
 s = requests.Session()
@@ -21,7 +21,7 @@ r = requests.get(B + "/marchio/icona-32.png"); ok("icona neutra anche senza acce
 ok("marchio: nome non ammesso -> 404", requests.get(B + "/marchio/utente.json").status_code == 404)
 r = requests.get(B + "/manifest.webmanifest"); ok("manifest senza accesso, col nome neutro", r.status_code == 200 and '"name": "Palinsesto"' in r.text and "/marchio/icona-192.png" in r.text)
 ok("accesso: logo neutro (nessun marchio nella configurazione)", 'class="stemma-neutro"' in requests.get(B + "/accesso").text)
-r = s.get(B + "/", allow_redirects=False); ok("senza sessione -> accesso", r.status_code == 302 and "/accesso" in r.headers["Location"], r.status_code)
+r = s.get(B + "/"); ok("senza token -> accesso (passando dal rinnovo)", r.url.startswith(B + "/accesso") and [x.status_code for x in r.history] == [303, 302], (r.url, [x.status_code for x in r.history]))
 r = s.post(B + "/accesso", data=dict(nome="prova", password="sbagliata", codice="000000")); ok("password sbagliata -> 401", r.status_code == 401)
 r = s.post(B + "/accesso", data=dict(nome="prova", password="prova-prova-123", codice=pyotp.TOTP("JBSWY3DPEHPK3PXP").now(), dopo="/novita"), allow_redirects=False)
 ok("accesso giusto -> torna a /novita", r.status_code == 302 and r.headers["Location"].endswith("/novita"), (r.status_code, r.headers.get("Location")))
@@ -179,7 +179,7 @@ ok("impostazioni: dentro c'è «Importa»", 'href="/importa"' in s.get(B + "/imp
 r = s.get(B + "/impostazioni"); ok("impostazioni: «Aggiorna adesso»", 'value="aggiorna"' in r.text and "Ultimo giro concluso" in r.text)
 r = s.post(B + "/impostazioni", data=dict(azione="aggiorna", csrf=csrf), allow_redirects=False)
 ok("...lanciato, si torna alla sezione", r.status_code == 302 and r.headers["Location"].endswith("#aggiorna"), r.headers.get("Location"))
-import time; time.sleep(3)
+time.sleep(3)
 r = s.get(B + "/impostazioni"); ok("...e la pagina mostra l'esito del giro", "manca la chiave TMDB" in r.text, re.findall(r'<pre class="registro">[^<]*', r.text))
 r = s.post(B + "/impostazioni", data=dict(azione="aggiorna")); ok("aggiorna senza CSRF -> 400", r.status_code == 400)
 
@@ -188,7 +188,54 @@ if len(sys.argv) > 1:
     r = requests.get(f"http://{sys.argv[1]}:45091/accesso"); ok("IP non ammesso -> 403", r.status_code == 403, r.status_code)
 r = s.get(B + "/img/w92/..%2f..%2fetc%2fpasswd"); ok("percorso immagine malformato -> 404", r.status_code == 404, r.status_code)
 r = s.get(B + "/img/w9999/abcdef.jpg"); ok("misura immagine non ammessa -> 404", r.status_code == 404, r.status_code)
+# --- token di accesso e di rinnovo ---
+def biscotto(sess, nome):
+    return next((x for x in sess.cookies if x.name == nome), None)
+a, rn = biscotto(s, "palinsesto"), biscotto(s, "palinsesto_rinnovo")
+ok("due cookie: accesso su /, rinnovo solo su /token", a and rn and a.path == "/" and rn.path == "/token", (a and a.path, rn and rn.path))
+ok("...il token di accesso e' un JWT", a and a.value.count(".") == 2 and a.value.startswith("eyJ"))
+m = re.search(r'<meta name="pal-restano" content="(\d+)">', s.get(B + "/").text)
+ok("la pagina dice quanti secondi restano al token", m and 590 <= int(m.group(1)) <= 600, m and m.group(1))
+ok("...la pagina di accesso no", 'pal-restano' not in requests.get(B + "/accesso").text)
+ok("rinnovo POST senza l'intestazione -> 400", s.post(B + "/token/rinnova").status_code == 400)
+vecchio = rn.value
+r = s.post(B + "/token/rinnova", headers={"X-Palinsesto": "rinnovo"})
+ok("rinnovo POST: 200, secondi che restano, token di rinnovo nuovo", r.status_code == 200 and r.json() == {"restano": 600} and biscotto(s, "palinsesto_rinnovo").value != vecchio, (r.status_code, r.text[:80]))
+r = s.get(B + "/impostazioni"); ok("csrf stabile dopo il rinnovo (i moduli gia' aperti valgono)", f'value="{csrf}"' in r.text)
+s.cookies.clear(domain=a.domain, path="/", name="palinsesto")
+r = s.get(B + "/novita?servizio=1")
+ok("token di accesso scaduto: la pagina passa dal rinnovo e torna dov'era", r.status_code == 200 and r.url == B + "/novita?servizio=1" and [x.status_code for x in r.history] == [303, 302], (r.url, [x.status_code for x in r.history]))
+s.cookies.clear(domain=a.domain, path="/", name="palinsesto")
+r = s.post(B + "/t/tv/1", data=dict(azione="avvisi", csrf=csrf), allow_redirects=False)
+ok("POST col token scaduto: rinnovo, poi la pagina (il modulo va rifatto)", r.status_code == 303 and r.headers["Location"].endswith("/token/rinnova?dopo=/t/tv/1"), r.headers.get("Location"))
+s.get(B + r.headers["Location"])
+s.cookies.clear(domain=a.domain, path="/", name="palinsesto")
+r = s.post(B + "/esci", data=dict(csrf=csrf), allow_redirects=False)
+ok("POST senza pagina GET: si torna alla casa", r.status_code == 303 and r.headers["Location"].endswith("/token/rinnova?dopo=/"), r.headers.get("Location"))
+s.get(B + r.headers["Location"])
+t = biscotto(s, "palinsesto").value
+s.cookies.set("palinsesto", t[:-4] + ("AAAA" if not t.endswith("AAAA") else "BBBB"), domain=a.domain, path="/")
+r = s.get(B + "/liste"); ok("token di accesso alterato: non vale (ma il rinnovo rimette a posto)", r.url == B + "/liste" and [x.status_code for x in r.history] == [303, 302], [x.status_code for x in r.history])
+ok("rinnovo GET con `dopo` esterno: si resta qui", s.get(B + "/token/rinnova?dopo=//esterno.example", allow_redirects=False).headers["Location"] == "/")
+r = s.get(B + "/impostazioni"); ok("impostazioni: un dispositivo, «questo»", "Dispositivi · 1" in r.text and "· questo" in r.text, re.findall(r"Dispositivi · \d+", r.text))
+s2 = requests.Session()
+r = s2.post(B + "/accesso", data=dict(nome="prova", password="prova-prova-123", codice=pyotp.TOTP("JBSWY3DPEHPK3PXP").at(time.time() + 30)), headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko Firefox/140.0"})
+ok("secondo dispositivo entra", r.status_code == 200 and r.url == B + "/", (r.status_code, r.url))
+r = s.get(B + "/impostazioni"); ok("...e compare in impostazioni", "Dispositivi · 2" in r.text and "Firefox su Linux" in r.text)
+altro = re.search(r'name="dispositivo" value="([^"]+)"', r.text).group(1)
+rn2 = biscotto(s2, "palinsesto_rinnovo").value
+r = s.post(B + "/impostazioni", data=dict(azione="chiudi_dispositivo", dispositivo=altro, csrf=csrf), allow_redirects=False)
+ok("chiudi l'altro dispositivo", r.status_code == 302 and r.headers["Location"].endswith("#dispositivi"))
+ok("...non rinnova piu' (e il 401 cancella i suoi cookie)", s2.post(B + "/token/rinnova", headers={"X-Palinsesto": "rinnovo"}).status_code == 401)
+s2.cookies.set("palinsesto_rinnovo", rn2, domain=a.domain, path="/token")
+ok("...e senza token di accesso torna alla pagina di accesso", s2.get(B + "/piano").url.startswith(B + "/accesso"))
+r = s.get(B + "/impostazioni"); ok("...ed e' sparito dall'elenco", "Dispositivi · 1" in r.text)
+ok("questo dispositivo non si chiude da qui (c'e' «Esci»)", s.post(B + "/impostazioni", data=dict(azione="chiudi_dispositivo", dispositivo=biscotto(s, "palinsesto").value and re.search(r'"dsp":"([^"]+)"', __import__("base64").urlsafe_b64decode(biscotto(s, "palinsesto").value.split(".")[1] + "==").decode()).group(1), csrf=csrf)).status_code == 400)
+rn = biscotto(s, "palinsesto_rinnovo").value
 r = s.post(B + "/esci", data=dict(csrf=csrf), allow_redirects=False); ok("uscita", r.status_code == 302)
-r = s.get(B + "/", allow_redirects=False); ok("dopo l'uscita -> accesso", r.status_code == 302)
+ok("...cancella tutti e due i cookie", biscotto(s, "palinsesto") is None and biscotto(s, "palinsesto_rinnovo") is None, [x.name for x in s.cookies])
+r = s.get(B + "/", allow_redirects=False); ok("dopo l'uscita -> rinnovo", r.status_code == 303)
+s.cookies.set("palinsesto_rinnovo", rn, domain=a.domain, path="/token")
+ok("...e il token di rinnovo copiato prima non vale piu'", s.post(B + "/token/rinnova", headers={"X-Palinsesto": "rinnovo"}).status_code == 401)
 print("\nTUTTO OK" if not ERR else f"\n{len(ERR)} CASI SBAGLIATI")
 sys.exit(1 if ERR else 0)

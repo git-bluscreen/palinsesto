@@ -9,7 +9,7 @@
 Le stesse voci si possono dare con variabili d'ambiente, che vincono sul file
 (in Docker e' il modo naturale): PALINSESTO_PAGINA, PALINSESTO_PROXY e
 PALINSESTO_AMMESSI (liste separate da virgole). PALINSESTO_HTTP=1 permette
-l'accesso anche senza HTTPS (cookie di sessione senza «Secure»): solo per
+l'accesso anche senza HTTPS (cookie dei token senza «Secure»): solo per
 provarlo in una rete di cui ti fidi, mai esposto.
 
 Senza file (o senza una voce) valgono i predefiniti: pagina su localhost, nessun
