@@ -7,8 +7,8 @@ mese per mese** per vedere tutto pagando meno.
 Un'applicazione web self-hosted per una persona (o una casa), pensata prima per il
 telefono. Nasce per l'Italia: servizi, disponibilità e interfaccia sono italiani.
 
-> La casa del progetto è **Codeberg**: <https://codeberg.org/bluscreen/palinsesto>. Su GitHub
-> c'è una copia in sola lettura; segnalazioni e proposte vanno su Codeberg.
+> Il progetto è su **Codeberg** (<https://codeberg.org/bluscreen/palinsesto>) e su **GitHub**
+> (<https://github.com/git-bluscreen/palinsesto>): segnalazioni e proposte vanno bene su entrambi.
 
 ## Che cosa fa
 
