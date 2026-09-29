@@ -218,6 +218,27 @@ CREATE INDEX IF NOT EXISTS catalogo_aperti ON catalogo(servizio_id) WHERE fino I
 """
 
 
+def copia_coerente(file=None):
+    """Copia del database in backup/palinsesto.db, coerente anche mentre si scrive
+    (API di backup di SQLite), controllata con integrity_check prima di sostituire
+    la precedente. Per chi fa il backup del volume dei dati."""
+    f = pathlib.Path(file or FILE)
+    dest = f.parent / "backup"
+    dest.mkdir(parents=True, exist_ok=True)
+    nuovo = dest / (f.name + ".nuovo")
+    src = sqlite3.connect(f, timeout=30)
+    dst = sqlite3.connect(nuovo)
+    try:
+        src.backup(dst)
+        esito = dst.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        dst.close(); src.close()
+    if esito != "ok":
+        raise RuntimeError(f"integrity_check: {esito}")
+    nuovo.replace(dest / f.name)
+    return f"{dest / f.name}, {(dest / f.name).stat().st_size} byte"
+
+
 def apri(file=None):
     f = pathlib.Path(file or FILE)
     f.parent.mkdir(parents=True, exist_ok=True)

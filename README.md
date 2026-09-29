@@ -41,7 +41,37 @@ indichi: va messo dietro un reverse proxy con HTTPS.
 
 Serve una **chiave API di TMDB** (gratuita, dal tuo account TMDB → Impostazioni → API).
 
-1. Pacchetti (su Debian 13):
+### Con Docker (o Podman)
+
+```
+docker build -t palinsesto .
+docker run -d --name palinsesto --restart unless-stopped \
+  -p 127.0.0.1:45090:45090 \
+  -e PALINSESTO_TMDB=la-tua-chiave-tmdb \
+  -e PALINSESTO_PAGINA=https://palinsesto.example.org \
+  -e PALINSESTO_AMMESSI=172.16.0.0/12 \
+  -v ./dati:/dati -v ./config:/config \
+  palinsesto
+docker exec -it palinsesto python3 utente.py      # la prima volta: crea l'accesso
+```
+
+Un solo contenitore fa tutto: la pagina e, dentro, gli orari fissi (giro alle 05:30,
+recupero alle 08:30, copia coerente del database alle 00:40; si cambiano con
+`PALINSESTO_ORARI`, vedi `pianificatore.py`). I dati stanno nei due volumi: `/dati`
+(database, copertine, copia per i backup) e `/config` (accesso e file facoltativi).
+C'è anche un esempio per Compose in `esempi/compose.yaml`.
+
+- **`PALINSESTO_AMMESSI`**: le richieste arrivano dal bridge del motore di container,
+  non da localhost, e senza questa voce la pagina risponde 403. Docker usa di solito
+  `172.16.0.0/12`, Podman `10.88.0.0/16`.
+- **HTTPS**: la sessione vuole HTTPS, quindi davanti serve un reverse proxy. Per
+  provarlo al volo in una rete di cui ti fidi c'è `PALINSESTO_HTTP=1`, da non usare
+  su una pagina esposta.
+- Il fuso orario degli orari è `TZ` (predefinito `Europe/Rome`).
+
+### Senza container
+
+1. Pacchetti (su Debian 13), oppure `pip install -r requirements.txt`:
    ```
    apt install python3-flask python3-waitress python3-pyotp python3-requests python3-qrcode
    ```
@@ -54,7 +84,8 @@ Serve una **chiave API di TMDB** (gratuita, dal tuo account TMDB → Impostazion
    ```
    python3 ~/palinsesto/utente.py
    ```
-5. La configurazione, facoltativa, in `~/.config/palinsesto/palinsesto.json`:
+5. La configurazione, facoltativa, in `~/.config/palinsesto/palinsesto.json` (modelli
+   di tutti i file in `esempi/`):
    ```json
    {
      "pagina":  "https://palinsesto.example.org",
@@ -64,7 +95,9 @@ Serve una **chiave API di TMDB** (gratuita, dal tuo account TMDB → Impostazion
    ```
    `pagina` è l'indirizzo pubblico (link delle notifiche e del calendario), `proxy`
    i reverse proxy di cui fidarsi per l'indirizzo del client, `ammessi` le reti che
-   possono collegarsi direttamente. Senza file si accetta solo localhost.
+   possono collegarsi direttamente. Senza file si accetta solo localhost. Le stesse voci
+   si possono dare con le variabili `PALINSESTO_PAGINA`, `PALINSESTO_PROXY` e
+   `PALINSESTO_AMMESSI`, che vincono sul file.
 6. Le unità in `systemd/`: la pagina (`palinsesto-web.service`, porta 45090), il
    giro notturno alle 05:30 (`palinsesto-aggiorna.timer`), il recupero alle 08:30
    (`palinsesto-recupero.timer`) e una copia coerente del database per i backup

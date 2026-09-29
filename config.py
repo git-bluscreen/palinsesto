@@ -6,11 +6,17 @@
       "ammessi": ["192.0.2.0/24"]                    # indirizzi o reti che possono collegarsi direttamente
     }
 
+Le stesse voci si possono dare con variabili d'ambiente, che vincono sul file
+(in Docker e' il modo naturale): PALINSESTO_PAGINA, PALINSESTO_PROXY e
+PALINSESTO_AMMESSI (liste separate da virgole). PALINSESTO_HTTP=1 permette
+l'accesso anche senza HTTPS (cookie di sessione senza «Secure»): solo per
+provarlo in una rete di cui ti fidi, mai esposto.
+
 Senza file (o senza una voce) valgono i predefiniti: pagina su localhost, nessun
 proxy, e si accettano solo connessioni da localhost. E' una seconda serratura: la
 prima resta il firewall davanti alla macchina.
 """
-import ipaddress, json
+import ipaddress, json, os
 
 from tmdb import CONF
 
@@ -20,9 +26,18 @@ PORTA_PREDEFINITA = 45090
 
 def leggi():
     try:
-        return json.loads(FILE.read_text())
+        voci = json.loads(FILE.read_text())
     except FileNotFoundError:
-        return {}
+        voci = {}
+    for chiave, lista in (("pagina", False), ("proxy", True), ("ammessi", True)):
+        v = os.environ.get("PALINSESTO_" + chiave.upper())
+        if v:
+            voci[chiave] = [x.strip() for x in v.split(",") if x.strip()] if lista else v.strip()
+    return voci
+
+
+def solo_https():
+    return os.environ.get("PALINSESTO_HTTP") != "1"
 
 
 def pagina():

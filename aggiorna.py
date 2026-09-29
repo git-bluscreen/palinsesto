@@ -251,7 +251,7 @@ def main():
     try:
         api = tmdb.TMDB()
     except FileNotFoundError:
-        log(f"giro FALLITO: manca la chiave TMDB in {tmdb.CONF / 'tmdb'}")
+        log(f"giro FALLITO: manca la chiave TMDB (file {tmdb.CONF / 'tmdb'} o variabile PALINSESTO_TMDB)")
         sys.exit(1)
     # un giro alla volta: timer delle 05:30, recupero delle 08:30 e tasto della
     # pagina possono incrociarsi. Il lucchetto si libera da solo quando il

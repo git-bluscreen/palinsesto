@@ -13,7 +13,7 @@ import getpass, hashlib, json, os, pathlib, secrets, sys
 
 import pyotp, qrcode
 
-CONF   = pathlib.Path.home() / ".config/palinsesto"
+CONF   = pathlib.Path(os.environ.get("PALINSESTO_CONF", pathlib.Path.home() / ".config/palinsesto"))
 UTENTE = CONF / "utente.json"
 N, R, P = 2**15, 8, 1          # scrypt: ~32 MiB e ~0,1 s per tentativo
 

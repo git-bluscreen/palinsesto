@@ -47,7 +47,7 @@ app.config.update(
     SECRET_KEY=chiave_sessione(),
     SESSION_COOKIE_NAME="palinsesto",
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=not PROVA,
+    SESSION_COOKIE_SECURE=not PROVA and config.solo_https(),
     SESSION_COOKIE_SAMESITE="Lax",        # Lax: il link della notifica ntfy deve aprire la pagina gia' dentro
     PERMANENT_SESSION_LIFETIME=DURATA_SESS,
     SESSION_REFRESH_EACH_REQUEST=False,
@@ -1016,7 +1016,16 @@ def importa():
 
 
 if __name__ == "__main__":
+    import signal
     from waitress import serve
+    # in un container Python e' il processo 1, che ignora SIGTERM se nessuno lo
+    # gestisce: «docker stop» aspetterebbe 10 secondi e poi ucciderebbe
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     db.apri().close()
+    if "--pianificatore" in sys.argv:         # Docker: giro, recupero e copia senza systemd (pianificatore.py)
+        import pianificatore
+        pianificatore.avvia(log)
+    if not config.solo_https():
+        log("ATTENZIONE: PALINSESTO_HTTP=1, sessione anche senza HTTPS: solo in una rete di cui ti fidi")
     log(f"Palinsesto in ascolto su 0.0.0.0:{PORTA}" + (" (PROVA)" if PROVA else ""))
     serve(app, host="0.0.0.0", port=PORTA, threads=4, ident=None)

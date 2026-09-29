@@ -1,0 +1,20 @@
+# Palinsesto con Docker Compose (funziona anche con podman compose).
+#   docker compose up -d
+#   docker compose exec palinsesto python3 utente.py      # la prima volta: crea l'accesso
+services:
+  palinsesto:
+    image: palinsesto              # oppure: build: ..   (dalla cartella del repository)
+    container_name: palinsesto
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:45090:45090"    # solo per il reverse proxy sulla stessa macchina
+    environment:
+      TZ: Europe/Rome
+      PALINSESTO_TMDB: "incolla-qui-la-chiave-tmdb"
+      PALINSESTO_PAGINA: "https://palinsesto.example.org"
+      # le richieste arrivano dal bridge: la sua rete va ammessa (Docker di solito
+      # 172.16.0.0/12, Podman 10.88.0.0/16), o la pagina risponde 403
+      PALINSESTO_AMMESSI: "172.16.0.0/12"
+    volumes:
+      - ./dati:/dati               # database, cache delle copertine, copia per i backup
+      - ./config:/config           # utente.json, chiave di sessione, file facoltativi

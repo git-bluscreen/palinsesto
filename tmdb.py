@@ -25,7 +25,7 @@ class ErroreTMDB(Exception):
 
 class TMDB:
     def __init__(self, chiave=None):
-        k = chiave or (CONF / "tmdb").read_text().strip()
+        k = chiave or os.environ.get("PALINSESTO_TMDB") or (CONF / "tmdb").read_text().strip()
         self.s = requests.Session()
         self.s.headers["Accept"] = "application/json"
         self.params = {}
