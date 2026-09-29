@@ -10,7 +10,9 @@
 #   variabili  REGISTRO_1_IMMAGINE  es. registro.example.org/utente/palinsesto
 #              REGISTRO_1_UTENTE
 #              REGISTRO_2_IMMAGINE, REGISTRO_2_UTENTE   (facoltativi)
-#   segreti    REGISTRO_1_TOKEN, REGISTRO_2_TOKEN       (permesso di scrivere pacchetti)
+#              REGISTRO_3_IMMAGINE, REGISTRO_3_UTENTE   (facoltativi)
+#   segreti    REGISTRO_1_TOKEN, REGISTRO_2_TOKEN, REGISTRO_3_TOKEN
+#              (permesso di scrivere pacchetti; per ghcr.io un token classico con write:packages)
 # Un registro senza immagine configurata si salta.
 name: immagine
 on:
@@ -28,6 +30,9 @@ jobs:
       IMMAGINE_2: ${{ vars.REGISTRO_2_IMMAGINE }}
       UTENTE_2: ${{ vars.REGISTRO_2_UTENTE }}
       TOKEN_2: ${{ secrets.REGISTRO_2_TOKEN }}
+      IMMAGINE_3: ${{ vars.REGISTRO_3_IMMAGINE }}
+      UTENTE_3: ${{ vars.REGISTRO_3_UTENTE }}
+      TOKEN_3: ${{ secrets.REGISTRO_3_TOKEN }}
       TOKEN_CODICE: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: codice
@@ -65,7 +70,10 @@ jobs:
             podman logout "${1%%/*}" >/dev/null
           }
           pubblica "$IMMAGINE_1" "$UTENTE_1" "$TOKEN_1"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then pubblica "$IMMAGINE_2" "$UTENTE_2" "$TOKEN_2"; fi
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            pubblica "$IMMAGINE_2" "$UTENTE_2" "$TOKEN_2"
+            pubblica "$IMMAGINE_3" "$UTENTE_3" "$TOKEN_3"
+          fi
 
       - name: pulizia
         if: always()

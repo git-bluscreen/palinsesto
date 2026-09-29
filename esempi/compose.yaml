@@ -3,7 +3,7 @@
 #   docker compose exec palinsesto python3 utente.py      # la prima volta: crea l'accesso
 services:
   palinsesto:
-    image: palinsesto              # oppure: build: ..   (dalla cartella del repository)
+    image: codeberg.org/bluscreen/palinsesto:latest   # oppure: build: ..   (dalla cartella del repository)
     container_name: palinsesto
     restart: unless-stopped
     ports:

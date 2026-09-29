@@ -43,23 +43,34 @@ Serve una **chiave API di TMDB** (gratuita, dal tuo account TMDB → Impostazion
 
 ### Con Docker (o Podman)
 
+L'immagine è pronta, costruita e collaudata a ogni versione:
+`codeberg.org/bluscreen/palinsesto` (anche `ghcr.io/git-bluscreen/palinsesto`), con i tag
+`latest` e la data della versione (per esempio `2026.09.29`).
+
 ```
-docker build -t palinsesto .
 docker run -d --name palinsesto --restart unless-stopped \
   -p 127.0.0.1:45090:45090 \
   -e PALINSESTO_TMDB=la-tua-chiave-tmdb \
   -e PALINSESTO_PAGINA=https://palinsesto.example.org \
   -e PALINSESTO_AMMESSI=172.16.0.0/12 \
   -v ./dati:/dati -v ./config:/config \
-  palinsesto
+  codeberg.org/bluscreen/palinsesto:latest
 docker exec -it palinsesto python3 utente.py      # la prima volta: crea l'accesso
 ```
+
+Per costruirla da sé, dalla cartella del repository: `docker build -t palinsesto .`, e poi
+`palinsesto` al posto del nome dell'immagine.
 
 Un solo contenitore fa tutto: la pagina e, dentro, gli orari fissi (giro alle 05:30,
 recupero alle 08:30, copia coerente del database alle 00:40; si cambiano con
 `PALINSESTO_ORARI`, vedi `pianificatore.py`). I dati stanno nei due volumi: `/dati`
 (database, copertine, copia per i backup) e `/config` (accesso e file facoltativi).
 C'è anche un esempio per Compose in `esempi/compose.yaml`.
+
+**Proxmox VE** (dalla 9.1) crea un container LXC direttamente dall'immagine: storage →
+CT Templates → *Pull from OCI Registry* → `codeberg.org/bluscreen/palinsesto:latest`, poi un
+container da quel modello, con i due volumi come mount point e le variabili d'ambiente.
+Per le immagini di applicazioni la funzione è ancora in anteprima tecnica.
 
 - **`PALINSESTO_AMMESSI`**: le richieste arrivano dal bridge del motore di container,
   non da localhost, e senza questa voce la pagina risponde 403. Docker usa di solito
