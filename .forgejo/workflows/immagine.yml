@@ -58,22 +58,30 @@ jobs:
         run: |
           set -eu
           if [ "$GITHUB_REF_TYPE" = tag ]; then TAGS="${GITHUB_REF_NAME#v} latest"; else TAGS="prova"; fi
-          pubblica() {   # $1 immagine, $2 utente, $3 token
+          FALLITI=""
+          pubblica() {   # $1 immagine, $2 utente, $3 token: un registro che fallisce non ferma gli altri
             [ -n "$1" ] || return 0
             [ -n "$2" ] && [ -n "$3" ] || { echo "$1: manca utente o token, salto"; return 0; }
-            printf '%s' "$3" | podman login --username "$2" --password-stdin "${1%%/*}" >/dev/null
+            if ! printf '%s' "$3" | podman login --username "$2" --password-stdin "${1%%/*}" >/dev/null; then
+              echo "::error::$1: accesso al registro rifiutato"; FALLITI="$FALLITI ${1%%/*}"; return 0
+            fi
             for t in $TAGS; do
               podman tag palinsesto:costruita "$1:$t"
-              podman push --quiet "$1:$t"
-              echo "pubblicata: $1:$t"
+              if podman push --quiet --retry 3 "$1:$t"; then
+                echo "pubblicata: $1:$t"
+              else
+                echo "::error::$1:$t: pubblicazione fallita"; FALLITI="$FALLITI $1:$t"
+              fi
             done
-            podman logout "${1%%/*}" >/dev/null
+            podman logout "${1%%/*}" >/dev/null || true
           }
+          set +e
           pubblica "$IMMAGINE_1" "$UTENTE_1" "$TOKEN_1"
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             pubblica "$IMMAGINE_2" "$UTENTE_2" "$TOKEN_2"
             pubblica "$IMMAGINE_3" "$UTENTE_3" "$TOKEN_3"
           fi
+          if [ -n "$FALLITI" ]; then echo "non pubblicate:$FALLITI"; exit 1; fi
 
       - name: pulizia
         if: always()
