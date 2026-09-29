@@ -39,8 +39,20 @@ def pausa_programmata(s, oggi):
     return pausa_chiesta(s, oggi) and not in_pausa(s, oggi)
 
 
+def passo_pausa(s):
+    """(giorni, volte) se la pausa si prende a passi, uno alla volta e poi si
+    proroga («30x3» = Netflix: un mese, prorogabile fino a tre); None se la
+    durata si sceglie all'inizio («14,28,56» = Disney+)."""
+    import re
+    m = re.fullmatch(r"\s*(\d+)\s*x\s*(\d+)\s*", s["pausa_durate"] or "")
+    return (int(m.group(1)), int(m.group(2))) if m and 0 < int(m.group(1)) <= 366 and 0 < int(m.group(2)) <= 12 else None
+
+
 def durate_pausa(s):
-    """Durate di pausa concesse dal servizio, in giorni, dalla piu' corta."""
+    """Durate di pausa possibili in tutto, in giorni, dalla piu' corta."""
+    passo = passo_pausa(s)
+    if passo:
+        return [passo[0] * i for i in range(1, passo[1] + 1)]
     return sorted({int(x) for x in (s["pausa_durate"] or "").split(",") if x.strip().isdigit() and 0 < int(x) <= 366})
 
 
@@ -813,31 +825,46 @@ def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None):
                 azioni.append(dict(s=s, tipo="tieni", quando=r, testo="Tienilo" + (f": al rinnovo del {breve(r)} ti serve ancora" if r else "")))
             else:
                 dopo = next((i for i in pagati if k is not None and i > k), None)
-                # Serve di nuovo piu' avanti e il servizio concede la pausa: meglio
-                # della disdetta, riparte da solo quando serve. Come la disdetta
-                # comincia al rinnovo: i giorni gia' pagati si guardano comunque.
-                # «Quando serve» e' il giorno in cui il primo titolo di quel periodo
-                # e' pronto, non l'inizio del periodo; la durata e' quella che fa
-                # ripartire piu' vicino a quel giorno, entro PAUSA_SCARTO (a parita',
-                # la piu' lunga: si paga dopo). Nessuna abbastanza vicina: disdici.
-                durata = None
-                if dopo is not None and r and durate_pausa(s):
-                    pronti_dopo = [y["pronto"] for x in out[dopo]["voci"] if x["s"]["id"] == sid for y in x["titoli"]]
-                    quando_serve = max([per[dopo][0]] + ([min(pronti_dopo)] if pronti_dopo else []))
-                    serve = (quando_serve - r).days
-                    vicine = sorted(durate_pausa(s), key=lambda d: (abs(d - serve), -d))
-                    durata = vicine[0] if serve > 0 and abs(vicine[0] - serve) <= PAUSA_SCARTO else None
+                # Il servizio concede la pausa: si mette in pausa invece di disdire,
+                # anche se dopo non c'e' niente (29/09, l'utente: «manteniamo il piu'
+                # possibile la membership», cronologia e preferenze restano). La
+                # disdetta viene solo alla fine della pausa, se ancora non serve: lo
+                # dice il ramo delle pause qui sopra, quando la pausa e' in corso.
+                # Come la disdetta comincia al rinnovo: i giorni pagati si guardano.
+                # Se serve di nuovo, la durata e' quella che fa ripartire piu' vicino
+                # al giorno in cui il primo titolo e' pronto, entro PAUSA_SCARTO (a
+                # parita' la piu' lunga: si paga dopo); oltre, la pausa piu' lunga.
+                durata, per_quando = None, False
+                if r and durate_pausa(s):
+                    durate = durate_pausa(s)
+                    if dopo is not None:
+                        pronti_dopo = [y["pronto"] for x in out[dopo]["voci"] if x["s"]["id"] == sid for y in x["titoli"]]
+                        serve = (max([per[dopo][0]] + ([min(pronti_dopo)] if pronti_dopo else [])) - r).days
+                        vicine = sorted(durate, key=lambda d: (abs(d - serve), -d))
+                        if serve > 0 and abs(vicine[0] - serve) <= PAUSA_SCARTO:
+                            durata, per_quando = vicine[0], True
+                        elif serve > durate[-1]:
+                            durata = durate[-1]
+                    else:
+                        durata = durate[-1]
                 if durata:
-                    fino = r + dt.timedelta(days=durata)
-                    azioni.append(dict(s=s, tipo="pausa", quando=r, fino=fino,
-                                       testo=f"Mettilo in pausa prima del {breve(r)}, per {durata} giorni: "
-                                             f"riparte il {breve(fino)}, quando ti serve di nuovo. Fino ad allora si guarda"))
+                    fino, passo = r + dt.timedelta(days=durata), passo_pausa(s)
+                    if passo:
+                        volte = durata // passo[0] - 1
+                        quanto = ("un mese" if passo[0] == 30 else f"{passo[0]} giorni") + \
+                            (f", poi prorogala {volte} volt{'a' if volte == 1 else 'e'} quando te lo propone" if volte else "")
+                    else:
+                        quanto = f"per {durata} giorni"
+                    seguito = f"riparte il {breve(fino)}, quando ti serve di nuovo" if per_quando else \
+                        f"alla fine ({breve(fino)}), se non ti serve ancora, disdici prima che riparta"
+                    azioni.append(dict(s=s, tipo="pausa", quando=r, fino=fino, quanto=quanto,
+                                       primo=r + dt.timedelta(days=passo[0]) if passo else fino,
+                                       proroghe=passo[1] - 1 if passo else None,
+                                       testo=f"Mettilo in pausa prima del {breve(r)}: {quanto}; {seguito}. Fino ad allora si guarda"))
                     continue
                 testo = (f"Disdici prima del {breve(r)}" if r else "Disdici") + ": fino ad allora resta attivo"
                 if dopo is not None:
                     testo += f"; riattivalo verso il {breve(per[dopo][0])}"
-                    if durate_pausa(s):
-                        testo += " (nessuna pausa concessa lo fa ripartire al momento giusto)"
                 azioni.append(dict(s=s, tipo="disdici", quando=r or oggi, testo=testo))
         elif s["stato"] == "disdetto" and sid in pagato and not pagati:
             testo = f"Già disdetto, attivo fino al {breve(pagato[sid])}"
@@ -921,7 +948,7 @@ def promemoria(c, oggi, p):
             a, r = azioni[sid], data(s["rinnovo"])
             ev.append(dict(uid=f"pausa-{sid}", giorno=max(r - dt.timedelta(days=1), oggi), avviso=2,
                            titolo=f"Metti in pausa {s['nome']}",
-                           testo=f"Al rinnovo del {r.strftime('%d/%m/%Y')} mettilo in pausa fino al {a['fino'].strftime('%d/%m/%Y')} "
+                           testo=f"Prima del rinnovo del {r.strftime('%d/%m/%Y')} mettilo in pausa: {a['quanto']} "
                                  f"(la pausa comincia dal rinnovo: fino ad allora si guarda). Poi segnalo in Palinsesto: «L'ho messo in pausa»."))
             continue
         if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"]:

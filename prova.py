@@ -438,14 +438,28 @@ pc.commit()
 pp = logica.piano(pc, D, 25, ancora=D)
 a = next(x for x in pp["azioni"] if x["s"]["nome"] == "Con pausa")
 atteso("pausa: serve di nuovo quando «Dopo» e' completa (+70): pausa dal rinnovo (+20), 60 giorni, riparte a +80",
-       [f"{a['tipo']} {a['testo']}"], f"pausa Mettilo in pausa prima del {logica.breve(D + dt.timedelta(20))}, per 60 giorni: "
-                                        f"riparte il {logica.breve(D + dt.timedelta(80))}")
+       [f"{a['tipo']} {a['testo']}"], f"pausa Mettilo in pausa prima del {logica.breve(D + dt.timedelta(20))}: per 60 giorni; "
+                                        f"riparte il {logica.breve(D + dt.timedelta(80))}, quando ti serve di nuovo")
 ev = {e["uid"]: e for e in logica.promemoria(pc, D, pp)}
 atteso("...promemoria «Metti in pausa» il giorno prima del rinnovo, niente «Disdici»",
        [f"{ev['pausa-11']['giorno']} {ev['pausa-11']['titolo']} {'disdici-11' in ev}"], f"{D + dt.timedelta(19)} Metti in pausa Con pausa False")
 pc.execute("UPDATE servizi SET pausa_durate='14,28' WHERE id=11"); pc.commit()
 a = next(x for x in logica.piano(pc, D, 25, ancora=D)["azioni"] if x["s"]["nome"] == "Con pausa")
-atteso("...pause troppo corte per arrivarci: disdici, e il perche'", [f"{a['tipo']} {a['testo']}"], "disdici", "nessuna pausa concessa", esatti=False)
+atteso("...pause troppo corte per arrivarci: la piu' lunga, e alla fine disdici (mai prima)", [f"{a['tipo']} {a['testo']}"],
+       f"pausa Mettilo in pausa prima del {logica.breve(D + dt.timedelta(20))}: per 28 giorni; alla fine ({logica.breve(D + dt.timedelta(48))}), "
+       "se non ti serve ancora, disdici prima che riparta")
+pc.execute("UPDATE servizi SET pausa_durate='30x3' WHERE id=11"); pc.commit()
+a = next(x for x in logica.piano(pc, D, 25, ancora=D)["azioni"] if x["s"]["nome"] == "Con pausa")
+atteso("...a passi come Netflix: un mese, poi una proroga", [f"{a['testo']} | primo {a['primo']} proroghe {a['proroghe']}"],
+       f"Mettilo in pausa prima del {logica.breve(D + dt.timedelta(20))}: un mese, poi prorogala 1 volta quando te lo propone; "
+       f"riparte il {logica.breve(D + dt.timedelta(80))}, quando ti serve di nuovo. Fino ad allora si guarda | primo {D + dt.timedelta(50)} proroghe 2")
+pc.execute("INSERT INTO servizi (id, nome, stato, prezzo, ciclo, rinnovo, pausa_durate) VALUES (12, 'Niente dopo', 'attivo', 5.99, 'mese', ?, '30x3')", (iso(20),))
+pc.commit()
+a = next(x for x in logica.piano(pc, D, 25, ancora=D)["azioni"] if x["s"]["nome"] == "Niente dopo")
+atteso("...niente da vedere: pausa lunga lo stesso, la disdetta solo alla fine", [a["testo"]],
+       f"Mettilo in pausa prima del {logica.breve(D + dt.timedelta(20))}: un mese, poi prorogala 2 volte quando te lo propone; "
+       f"alla fine ({logica.breve(D + dt.timedelta(110))}), se non ti serve ancora, disdici prima che riparta. Fino ad allora si guarda")
+pc.execute("DELETE FROM servizi WHERE id=12")
 pc.execute("UPDATE servizi SET pausa_durate='30,60,90' WHERE id=11"); pc.commit()
 # segnata la pausa: comincia al rinnovo, fino ad allora si guarda
 pc.execute("UPDATE servizi SET pausa_dal=?, pausa_fino=?, rinnovo=? WHERE id=11", (iso(20), iso(80), iso(80))); pc.commit()

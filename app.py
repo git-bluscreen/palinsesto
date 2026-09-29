@@ -801,7 +801,11 @@ def abbonamento_salva(sid):
         fine = (logica.data(campo_data("rinnovo")) - dt.timedelta(days=1)).isoformat()
     conserva = request.form.get("conserva_mesi", type=int)
     pulito = lambda k, n: re.sub(r"[\x00-\x1f\x7f]", " ", request.form.get(k, "")).strip()[:n] or None
-    durate = sorted({int(x) for x in re.split(r"[,\s]+", request.form.get("pausa_durate", "")) if x.isdigit() and 0 < int(x) <= 366})
+    # «30x3» = a passi, poi si proroga (Netflix); «14, 28, 56» = si sceglie all'inizio (Disney+)
+    grezze = request.form.get("pausa_durate", "")
+    a_passi = re.fullmatch(r"\s*(\d{1,3})\s*[xX]\s*(\d{1,2})\s*", grezze)
+    durate = [f"{int(a_passi.group(1))}x{int(a_passi.group(2))}"] if a_passi else \
+        sorted({int(x) for x in re.split(r"[,\s]+", grezze) if x.isdigit() and 0 < int(x) <= 366})
     c().execute("""UPDATE servizi SET stato=?, prezzo=?, ciclo=?, rinnovo=?, fine=?, canale=?, conserva_mesi=?, note=?,
                    pausa_fino=?, pausa_dal=?, pausa_proroghe=?, pausa_durate=? WHERE id=?""",
                 (stato, prezzo, ciclo, pausa_fino or campo_data("rinnovo"), fine, pulito("canale", 60),

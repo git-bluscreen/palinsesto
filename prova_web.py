@@ -155,6 +155,8 @@ r = s.post(B + "/t/tv/1", data=dict(azione="non_ce", servizio=1)); ok("correzion
 # pausa: dal rinnovo, annullabile prima che cominci
 s.post(B + "/abbonamenti/1", data=dict(stato="attivo", ciclo="mese", prezzo="13,99", rinnovo="2030-01-10", pausa_durate="30, 60,90", csrf=csrf))
 r = s.get(B + "/abbonamenti"); ok("durate della pausa salvate", 'value="30, 60, 90"' in r.text)
+s.post(B + "/abbonamenti/1", data=dict(stato="attivo", ciclo="mese", prezzo="13,99", rinnovo="2030-01-10", pausa_durate="30 x 3", csrf=csrf))
+r = s.get(B + "/abbonamenti"); ok("pausa a passi «30x3» salvata", 'value="30x3"' in r.text)
 r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="pausa", fino="2030-03-10", torna="/abbonamenti", csrf=csrf))
 ok("«L'ho messo in pausa»: comincia al rinnovo, fino ad allora attivo", "poi in pausa dal 10/01/2030 al 10/03/2030" in r.text, re.findall(r"Attivo fino[^<]*|In pausa[^<]*", r.text)[:2])
 r = s.post(B + "/abbonamenti/1/fatto", data=dict(azione="pausa", fino="2030-04-10", csrf=csrf)); ok("una seconda pausa sopra la prima -> 400", r.status_code == 400)

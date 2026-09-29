@@ -261,8 +261,14 @@ def migra(c):
         # cercato il 29/09: Netflix un mese alla volta, prorogabile fino a tre;
         # Disney+ in Italia 2, 4 o 8 settimane (dove la concede). Dal rinnovo, per
         # tutti e due. Si correggono da Abbonamenti se cambiano
-        c.execute("UPDATE servizi SET pausa_durate='30,60,90' WHERE nome='Netflix' AND pausa_durate IS NULL")
+        c.execute("UPDATE servizi SET pausa_durate='30x3' WHERE nome='Netflix' AND pausa_durate IS NULL")
         c.execute("UPDATE servizi SET pausa_durate='14,28,56' WHERE nome='Disney+' AND pausa_durate IS NULL")
+        c.commit()
+    # 29/09: Netflix si mette in pausa un mese alla volta e poi si proroga: «30x3».
+    # Una volta sola: dopo, la scelta fatta in Abbonamenti non si tocca piu'
+    if not meta(c, "migrato_pausa_passi"):
+        c.execute("UPDATE servizi SET pausa_durate='30x3' WHERE nome='Netflix' AND pausa_durate='30,60,90'")
+        meta(c, "migrato_pausa_passi", 1)
         c.commit()
     if not meta(c, "lista_da_vedere"):
         r = c.execute("SELECT id FROM liste WHERE nome='Da vedere'").fetchone() or \

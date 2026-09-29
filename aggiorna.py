@@ -41,7 +41,7 @@ PREDEFINITI = [
 # durate di pausa concesse, in giorni (cercato il 29/09; si correggono da
 # Abbonamenti): Netflix un mese, prorogabile fino a tre; Disney+ in Italia 2, 4 o
 # 8 settimane. Tutte e due partono dal rinnovo. NOW, Apple TV+, Paramount+: no
-PAUSE = {"Netflix": "30,60,90", "Disney+": "14,28,56"}
+PAUSE = {"Netflix": "30x3", "Disney+": "14,28,56"}
 GIORNI_PROVIDER = 7
 GIORNI_CATALOGO = 540      # «recenti»: usciti negli ultimi 18 mesi
 PAGINE_CATALOGO = 5        # 20 titoli a pagina, per tipo e per servizio

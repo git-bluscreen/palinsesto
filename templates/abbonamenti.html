@@ -52,7 +52,7 @@
     <label>In pausa dal<input type="date" name="pausa_dal" value="{{ s.pausa_dal or '' }}"><small>Solo se «In pausa»: il rinnovo da cui comincia. Vuota: già cominciata.</small></label>
     <label>In pausa fino al<input type="date" name="pausa_fino" value="{{ s.pausa_fino or '' }}"><small>Solo se «In pausa»: quel giorno riparte e addebita.</small></label>
     <label>Proroghe della pausa rimaste<input name="pausa_proroghe" type="number" min="0" max="9" value="{{ s.pausa_proroghe if s.pausa_proroghe is not none else '' }}" placeholder="vuoto = non lo so"></label>
-    <label>Pause concesse (giorni)<input name="pausa_durate" value="{{ (s.pausa_durate or '').replace(',', ', ') }}" placeholder="vuoto = niente pausa" maxlength="40"><small>Es. «30, 60, 90». Il piano propone la pausa invece della disdetta quando basta a coprire l'attesa.</small></label>
+    <label>Pause concesse (giorni)<input name="pausa_durate" value="{{ (s.pausa_durate or '').replace(',', ', ') }}" placeholder="vuoto = niente pausa" maxlength="40"><small>«30x3»: un mese alla volta, prorogabile fino a tre (Netflix). «14, 28, 56»: la durata si sceglie all'inizio (Disney+). Con la pausa, il piano non propone mai di disdire prima che sia finita.</small></label>
     <label>Tramite<input name="canale" value="{{ s.canale or '' }}" placeholder="diretto, Prime Video Channels, TIM…" maxlength="60"></label>
     <label>Cronologia conservata (mesi)<input name="conserva_mesi" type="number" min="1" max="119" value="{{ s.conserva_mesi or '' }}" placeholder="da verificare"></label>
     <label class="largo">Note<input name="note" value="{{ s.note or '' }}" maxlength="300"></label>
