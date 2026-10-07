@@ -28,6 +28,8 @@
     <a href="{{ url_for('abbonamenti') }}" {% if sezione in ('abbonamenti', 'piano') %}aria-current="page"{% endif %}>Abbonamenti</a>
   </nav>
   <div class="testata-azioni">
+    <a class="icona" href="{{ url_for('come_funziona') }}" title="Come funziona" aria-label="Come funziona" {% if sezione == 'come_funziona' %}aria-current="page"{% endif %}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 0 1 5 .9c0 1.7-2.5 2.3-2.5 3.9M12 17h.01"/></svg></a>
     <a class="icona" href="{{ url_for('impostazioni') }}" title="Impostazioni (e importazione)" aria-label="Impostazioni" {% if sezione in ('impostazioni', 'importa') %}aria-current="page"{% endif %}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>
     <form method="post" action="{{ url_for('esci') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}">
@@ -39,7 +41,6 @@
 {% block corpo %}{% endblock %}
 </main>
 <footer class="piede">
-  <p><a href="{{ url_for('come_funziona') }}">Come funziona Palinsesto</a></p>
   <p>Schede e copertine da <a href="https://www.themoviedb.org" rel="noreferrer">TMDB</a>, disponibilità da <a href="https://www.justwatch.com/it" rel="noreferrer">JustWatch</a>. Questo prodotto usa l'API di TMDB ma non è approvato né certificato da TMDB.</p>
 </footer>
 <nav class="nav-basso" aria-label="Sezioni">
