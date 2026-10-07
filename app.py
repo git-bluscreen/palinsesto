@@ -1032,6 +1032,11 @@ def impostazioni_salva():
 
 
 # --- importazione da JustWatch ------------------------------------------------
+@app.route("/come-funziona")
+def come_funziona():
+    return render_template("come_funziona.html", L=logica, ore_mese=int(db.meta(c(), "ore_mese") or logica.ORE_MESE))
+
+
 RIGA_ANNO = re.compile(r"^(.*?)[\s,;(\[-]*((?:19|20)\d\d)[)\]]?\s*$")
 
 @app.route("/importa", methods=["GET", "POST"])

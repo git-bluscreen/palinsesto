@@ -366,3 +366,13 @@ button.collegamento.tenue-link { color: var(--tenue); font-size: .75rem; text-al
 
 .registro { white-space: pre-wrap; font-size: .75rem; margin: .5rem 0 0; color: var(--tenue); }
 .avviso-giro { color: var(--accento); }
+
+/* Come funziona */
+.guida { max-width: 46rem; }
+.guida section { margin-bottom: 1.8rem; scroll-margin-top: 4.5rem; }
+.guida p, .guida li { line-height: 1.55; }
+.guida ul:not(.elenco-righe) { padding-left: 1.2rem; }
+.guida li + li { margin-top: .35rem; }
+.guida .indice { margin-bottom: 1.5rem; flex-wrap: wrap; }
+.verdetti li { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; }
+.verdetti .etichetta { flex: none; }

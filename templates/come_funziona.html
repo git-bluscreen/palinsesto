@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}Come funziona · Palinsesto{% endblock %}
+{% block corpo %}
+<article class="guida">
+<h1 class="pagina-titolo">Come funziona</h1>
+<p class="riepilogo">Palinsesto tiene il conto di cosa hai da vedere e di dove si vede, e da lì ti dice <b>quale abbonamento tenere, mettere in pausa o disdire</b> mese per mese, per vedere tutto pagando meno.</p>
+<nav class="schede-servizi indice" aria-label="Argomenti">
+  <a href="#titoli">Titoli</a><a href="#dove">Dove si vede</a><a href="#conviene">Conviene?</a><a href="#piano">Piano</a>
+  <a href="#pausa">Pausa</a><a href="#consigli">Consigli</a><a href="#avvisi">Avvisi</a><a href="#dati">Dati</a>
+</nav>
+
+<section id="titoli">
+  <h2 class="sezione-titolo">I tuoi titoli e «Da vedere»</h2>
+  <p>Un titolo diventa <b>tuo</b> quando lo metti in una lista (dalla scheda, dalla ricerca, col pollice su o importandolo da JustWatch). Le liste le crei e le rinomini tu; «Da vedere» è speciale:</p>
+  <ul>
+    <li>un <b>film</b> esce da «Da vedere» quando lo segni visto;</li>
+    <li>una <b>serie</b> esce quando hai visto tutto quello che è uscito e non c'è una stagione in corso;</li>
+    <li>se poi esce una <b>stagione nuova</b>, la serie ci rientra da sola. Un titolo che hai tolto <b>tu</b> a mano invece non rientra.</li>
+  </ul>
+  <p>Per le serie segni le stagioni o i singoli episodi. Una stagione conta come «da vedere» solo quando è <b>completa</b>: finché escono gli episodi è «in corso», e il piano la aspetta.</p>
+</section>
+
+<section id="dove">
+  <h2 class="sezione-titolo">Dove si vede</h2>
+  <p>Schede, copertine e disponibilità in Italia vengono da <a href="https://www.themoviedb.org" rel="noreferrer">TMDB</a>, che per le disponibilità usa <a href="https://www.justwatch.com/it" rel="noreferrer">JustWatch</a>. Contano solo i servizi che <b>segui</b> (si scelgono in <a href="{{ url_for('impostazioni') }}">Impostazioni</a>) e solo le offerte comprese nell'abbonamento: noleggio e acquisto non contano.</p>
+  <p>Ogni notte un <b>giro</b> riscarica tutto e lo confronta col giorno prima: è così che Palinsesto si accorge che un titolo è arrivato o se n'è andato, che una stagione è stata annunciata, è iniziata o è completa. Se di notte la rete manca, riprova al mattino; «Aggiorna adesso» in Impostazioni lo fa partire subito.</p>
+  <p class="nota">La fonte a volte sbaglia o arriva in ritardo: nella scheda, «non c'è davvero» toglie un servizio sbagliato da quel titolo finché la fonte si corregge.</p>
+</section>
+
+<section id="conviene">
+  <h2 class="sezione-titolo">«Conviene?»: un consiglio per servizio</h2>
+  <p>In Home e in Abbonamenti ogni servizio seguito ha un consiglio, calcolato su quello che hai da vedere lì:</p>
+  <ul class="elenco-righe verdetti">
+    <li><span class="etichetta v-attiva">{{ mm.ETICHETTE['attiva'] }}</span> <span>c'è qualcosa di pronto da vedere e non sei abbonato.</span></li>
+    <li><span class="etichetta v-sfrutta">{{ mm.ETICHETTE['sfrutta'] }}</span> <span>c'è qualcosa di pronto e sei già abbonato (o hai disdetto ma sei ancora nei giorni pagati).</span></li>
+    <li><span class="etichetta v-aspetta">{{ mm.ETICHETTE['aspetta'] }}</span> <span>niente di pronto, ma qualcosa arriva o si completa: la data è quella del primo.</span></li>
+    <li><span class="etichetta v-disdici">{{ mm.ETICHETTE['disdici'] }}</span> <span>sei abbonato e non c'è niente di tuo da vedere né in arrivo.</span></li>
+    <li><span class="etichetta v-niente">{{ mm.ETICHETTE['niente'] }}</span> <span>niente da vedere e niente da pagare (non abbonato, o in pausa).</span></li>
+  </ul>
+  <p class="nota">Il consiglio guarda un servizio alla volta. Per decidere tenendo conto di tutti insieme, e del tempo che hai, c'è il piano.</p>
+</section>
+
+<section id="piano">
+  <h2 class="sezione-titolo">Il piano dei prossimi mesi</h2>
+  <p>Il <a href="{{ url_for('piano') }}">piano</a> divide i prossimi {{ L.PIANO_PERIODI }} mesi in periodi di {{ L.PIANO_GIORNI }} giorni, come un abbonamento mensile, contati sempre dallo stesso giorno perché le date non scivolino. Poi riempie ogni periodo con quello che hai da vedere, fino alle <b>ore che guardi in un mese</b> (ora {{ ore_mese }}, si cambia in cima al piano).</p>
+  <ul>
+    <li><b>Il tempo:</b> un film conta la sua durata (o {{ L.MIN_FILM }} minuti se non è nota), una stagione la somma dei suoi episodi ({{ L.MIN_EPISODIO }} minuti l'uno se non è nota). Una stagione si guarda tutta di seguito.</li>
+    <li><b>Prima quello che hai già pagato:</b> un servizio attivo, o disdetto ma pagato per almeno metà del periodo, si usa senza spendere.</li>
+    <li><b>Poi chi deve continuare</b> (un servizio attivato nel periodo prima che non hai finito), <b>poi i nuovi</b>, dal più carico.</li>
+    <li><b>Un servizio nuovo si attiva</b> se ha abbastanza da guardare da riempire buona parte del mese, se un titolo aspetta da {{ L.ATTESA_MAX }} periodi, o se nei prossimi {{ L.ATTESA_UNIONE }} periodi non arriva altro da guardarci insieme. Altrimenti si <b>rimanda</b>, e il motivo è scritto sotto il periodo.</li>
+    <li>Un titolo che si vede su più servizi va sul primo che lo può prendere: quello già pagato, se c'è, altrimenti quello con più cose da guardare.</li>
+    <li>Una stagione troppo lunga per un mese si divide: una parte in questo periodo, il resto nel successivo, sullo stesso servizio.</li>
+  </ul>
+  <p>In cima al piano, «<b>Cosa fare adesso</b>» traduce tutto in azioni per servizio: attiva, tieni, metti in pausa, riprendi, disdici. Quando lo hai fatto, il tasto accanto («L'ho attivato oggi», «L'ho disdetto»…) aggiorna l'abbonamento e il piano si ricalcola.</p>
+  <p class="nota">La spesa del piano è confrontata con quella di tenere attivi, per gli stessi mesi, gli abbonamenti mensili che hai oggi. Un servizio senza prezzo conta il prezzo tipico degli altri, segnalato come stima. Le date di fine segnate «stima» contano un episodio a settimana. Il piano è fatto per essere <b>spiegabile</b>, non per trovare il risparmio massimo in assoluto.</p>
+  <p class="nota">Disdire subito dopo aver attivato di solito lascia il servizio attivo fino alla fine del mese pagato: per questo il piano dice «disdici prima del…» la data del rinnovo, e fino ad allora si guarda.</p>
+</section>
+
+<section id="pausa">
+  <h2 class="sezione-titolo">Pausa invece di disdetta</h2>
+  <p>Alcuni servizi (Netflix, Disney+) permettono di <b>mettere in pausa</b> l'abbonamento: non paghi, ma cronologia, profili e preferenze restano. Dove la pausa c'è, il piano la preferisce sempre alla disdetta, e propone di disdire solo quando la pausa è finita e il servizio ancora non serve.</p>
+  <ul>
+    <li>La pausa, come la disdetta, comincia dal <b>prossimo rinnovo</b>: i giorni già pagati si guardano.</li>
+    <li>Se il servizio servirà di nuovo, il piano sceglie la durata che lo fa ripartire più vicino al giorno in cui serve.</li>
+    <li>Se la pausa finisce troppo tardi (più di {{ L.PAUSA_SCARTO }} giorni dopo quando serve) propone di riprenderlo prima; se finisce poco dopo, aspetta che riparta da solo.</li>
+  </ul>
+  <p class="nota">Le regole delle pause cambiano da servizio a servizio e nel tempo: si scrivono in <a href="{{ url_for('abbonamenti') }}">Abbonamenti</a> («30x3»: un mese alla volta, prorogabile fino a tre volte; «14, 28, 56»: la durata si sceglie all'inizio). Quando non si sa quante proroghe restano, Palinsesto non lo inventa: lascia il campo vuoto e lo dice.</p>
+</section>
+
+<section id="consigli">
+  <h2 class="sezione-titolo">Consigliati, «In arrivo» e «Novità»</h2>
+  <p><b>Consigliati per te:</b> per ogni tuo titolo TMDB suggerisce titoli simili; Palinsesto li somma pesandoli. Conta di più un titolo con «mi piace», poi uno visto, poi uno solo in lista; quelli segnati «non mi interessa» (o col pollice giù) tolgono punti a ciò che gli somiglia. Restano fuori i titoli già tuoi, quelli con voto sotto {{ L.CONSIGLI_VOTO_MIN }} o con meno di {{ L.CONSIGLI_VOTI_MIN }} voti, e quelli che non si vedono su un servizio seguito; chi è su un servizio a cui sei abbonato sale un po'. Accanto a ogni consiglio c'è il tuo titolo che ha pesato di più.</p>
+  <p><b>In arrivo sulle piattaforme:</b> stagioni nuove e serie che debuttano sui servizi seguiti nei prossimi due mesi, con in alto quelle che somigliano ai tuoi gusti. Il pollice su mette il titolo in «Da vedere», il pollice giù lo nasconde; tutti e due insegnano cosa proporti. I film non ci sono: nessuno annuncia con una data quando un film arriva su un servizio in Italia.</p>
+  <p><b>Novità:</b> in alto quello che è successo ai tuoi titoli e abbonamenti; sotto, i titoli recenti comparsi per la prima volta fra i più visti di un servizio. TMDB non dice il giorno in cui un titolo entra in catalogo: la data è la notte in cui Palinsesto l'ha visto.</p>
+</section>
+
+<section id="avvisi">
+  <h2 class="sezione-titolo">Avvisi e calendario</h2>
+  <p>Il giro notturno raccoglie gli eventi in un solo messaggio (se le notifiche sono configurate):</p>
+  <ul>
+    <li>dai titoli con <b>avvisi attivi</b>: arrivato su un servizio, non più su un servizio, stagione annunciata, iniziata, completa, serie conclusa;</li>
+    <li>dagli abbonamenti: rinnovo o fine fra {{ L.GIORNI_RINNOVO }} giorni, pausa che finisce, e un mese prima che un servizio disdetto possa cancellare la <b>cronologia</b> (se in Abbonamenti hai scritto per quanti mesi la conserva).</li>
+  </ul>
+  <p>Gli avvisi di un titolo si accendono e spengono dalla sua scheda. Se è configurato un calendario (CalDAV, per esempio Nextcloud), le azioni del piano diventano <b>promemoria</b> con la data, aggiornati a ogni giro.</p>
+  <p class="nota">Un abbonamento attivo si rinnova da solo: passata la data, Palinsesto sposta il rinnovo al mese (o all'anno) dopo. Quello che fai sul sito del servizio però Palinsesto non lo vede: attivazioni, pause e disdette vanno segnate qui.</p>
+</section>
+
+<section id="dati">
+  <h2 class="sezione-titolo">I tuoi dati</h2>
+  <ul>
+    <li>Tutto sta in un database sul server dove gira Palinsesto: nessun account esterno, nessuna statistica inviata.</li>
+    <li>Le copertine passano dal server, che le tiene in cache: il tuo browser non parla mai con TMDB.</li>
+    <li>Palinsesto non legge la cronologia dai siti dei servizi: visti, attivazioni e disdette sono quelli che segni tu.</li>
+    <li>Si entra con password e codice dell'app di autenticazione; in Impostazioni c'è l'elenco dei dispositivi entrati, ognuno chiudibile.</li>
+  </ul>
+</section>
+</article>
+{% endblock %}

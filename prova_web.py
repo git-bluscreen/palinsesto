@@ -27,10 +27,11 @@ r = s.post(B + "/accesso", data=dict(nome="prova", password="prova-prova-123", c
 ok("accesso giusto -> torna a /novita", r.status_code == 302 and r.headers["Location"].endswith("/novita"), (r.status_code, r.headers.get("Location")))
 r = s.post(B + "/accesso", data=dict(nome="prova", password="prova-prova-123", codice="1", dopo="//esterno.example"), allow_redirects=False)
 for p in ["/", "/cerca", "/liste", "/liste/1", "/liste/tutti", "/liste/piaciuti", "/liste/avvisi", "/liste/1?da_vedere=1&miei_abb=1&tipo=tv&servizio=1",
-          "/novita", "/novita?servizio=1", "/servizio/1", "/servizio/3", "/abbonamenti", "/impostazioni", "/importa", "/t/tv/1", "/t/movie/2", "/static/stile.css"]:
+          "/novita", "/novita?servizio=1", "/servizio/1", "/servizio/3", "/abbonamenti", "/impostazioni", "/importa", "/come-funziona", "/t/tv/1", "/t/movie/2", "/static/stile.css"]:
     r = s.get(B + p); ok(f"GET {p} -> {r.status_code}", r.status_code == 200, r.text[-300:])
 csrf = re.search(r'name="csrf" value="([^"]+)"', s.get(B + "/t/tv/1").text).group(1)
 ok("«Dove lo trovi» porta alla pagina del servizio", 'href="/servizio/' in s.get(B + "/t/tv/1").text)
+r = s.get(B + "/come-funziona"); ok("come funziona: linkata dal piede, con i numeri del codice", 'href="/come-funziona"' in s.get(B + "/").text and "periodi di 30 giorni" in r.text and "{{" not in r.text)
 ok("servizio inesistente -> 404", s.get(B + "/servizio/9999").status_code == 404)
 r = s.post(B + "/t/tv/1", data=dict(azione="mi_piace")); ok("POST senza CSRF -> 400", r.status_code == 400)
 if "♥ Mi piace" in s.get(B + "/t/tv/1").text:          # prova.py puo' averlo lasciato gia' acceso
