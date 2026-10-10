@@ -2,7 +2,7 @@
 {% import "_macro.html" as mm %}
 {% block corpo %}
 {% if senza_chiave %}
-<p class="errore">Manca la chiave TMDB (<code>~/.config/palinsesto/tmdb</code>): senza, niente ricerche né aggiornamenti.</p>
+<p class="errore">Manca la chiave TMDB (in <code>{{ file_tmdb }}</code> o nella variabile <code>PALINSESTO_TMDB</code>): senza, niente ricerche né aggiornamenti.</p>
 {% endif %}
 
 {% if vuoto %}

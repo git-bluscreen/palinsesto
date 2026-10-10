@@ -496,7 +496,7 @@ def casa():
     return render_template("casa.html", consigli=consigli, prossime=prossime[:12], eventi=eventi, consigliati=consigliati(),
                            arrivi=arrivi(quanti=8), conta_arrivi=conta_arrivi(),
                            lista_dv=int(db.meta(c(), "lista_da_vedere") or 0),
-                           ultimo_giro=db.meta(c(), "ultimo_giro"), senza_chiave=api() is None,
+                           ultimo_giro=db.meta(c(), "ultimo_giro"), senza_chiave=api() is None, file_tmdb=CONF / "tmdb",
                            vuoto=not c().execute("SELECT 1 FROM miei").fetchone())
 
 

@@ -71,6 +71,7 @@ r = s.post(B + "/abbonamenti/1", data=dict(stato="attivo", ciclo="mese", rinnovo
 r = s.post(B + "/impostazioni", data=dict(azione="seguito", servizio=6, csrf=csrf)); ok("smetti di seguire un servizio", r.status_code == 200 and "Non seguito" in r.text)
 r = s.post(B + "/impostazioni", data=dict(azione="seguito", servizio=6, csrf=csrf))
 r = s.get(B + "/"); ok("home: Conviene? presente", "Conviene?" in r.text and "Netflix" in r.text)
+ok("home senza chiave TMDB: l'avviso dice il file vero e PALINSESTO_TMDB", "Manca la chiave TMDB" in r.text and re.search(r"in <code>/[^<]*/tmdb</code>", r.text) and "PALINSESTO_TMDB" in r.text and "~/.config" not in r.text, r.text[:400])
 ok("home: consigliati col motivo", "Consigliati per te" in r.text and "Consigliata Netflix" in r.text and "per «Serie Uno»" in r.text)
 r = s.get(B + "/"); ok("home: in arrivo sulle piattaforme", "In arrivo sulle piattaforme" in r.text and "Torna con la 2" in r.text and "Netflix · 3" in r.text and "S04E05" in r.text)
 r = s.get(B + "/in-arrivo?servizio=1"); ok("pagina in arrivo per Netflix", r.status_code == 200 and "Stagione 2" in r.text and "Nuova serie" in r.text)

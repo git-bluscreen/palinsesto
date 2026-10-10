@@ -72,14 +72,34 @@ recupero alle 08:30, copia coerente del database alle 00:40; si cambiano con
 (database, copertine, copia per i backup) e `/config` (accesso e file facoltativi).
 C'è anche un esempio per Compose in `esempi/compose.yaml`.
 
-**Proxmox VE** (dalla 9.1) crea un container LXC direttamente dall'immagine: storage →
-CT Templates → *Pull from OCI Registry* → `codeberg.org/bluscreen/palinsesto:latest`, poi un
-container da quel modello, con i due volumi come mount point e le variabili d'ambiente.
-Per le immagini di applicazioni la funzione è ancora in anteprima tecnica.
+**Proxmox VE** (dalla 9.1) crea un container LXC direttamente dall'immagine. Per le immagini
+di applicazioni la funzione è ancora in anteprima tecnica.
 
-- **`PALINSESTO_AMMESSI`**: le richieste arrivano dal bridge del motore di container,
-  non da localhost, e senza questa voce la pagina risponde 403. Docker usa di solito
-  `172.16.0.0/12`, Podman `10.88.0.0/16`.
+1. Storage → CT Templates → *Pull from OCI Registry*: `codeberg.org/bluscreen/palinsesto`,
+   *Query Tags*, scegli un tag. Il modello si chiama `palinsesto_<tag>.tar`.
+2. Il container, dalla shell del nodo (Proxmox prende dall'immagine comando, utente,
+   cartella di lavoro e variabili):
+   ```
+   pct create 100 local:vztmpl/palinsesto_2026.10.07.1.tar --hostname palinsesto \
+     --memory 512 --rootfs local-lvm:4 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1
+   ```
+   Per tenere i dati fuori dal disco del container, aggiungi due mount point su `/dati` e
+   `/config`.
+3. Container → Options → *Environment*: aggiungi `PALINSESTO_TMDB` e le voci di rete (vedi
+   sotto), poi avvia.
+4. La prima volta crea l'accesso. Va fatto come l'utente dell'app (uid 10001) e con
+   `PALINSESTO_CONF`, perché `pct exec` entra come root e senza le variabili del container:
+   ```
+   pct exec 100 -- env PALINSESTO_CONF=/config HOME=/app python3 -c 'import os; os.setgroups([]); os.setgid(999); os.setuid(10001); os.chdir("/app"); os.execvp("python3", ["python3", "utente.py"])'
+   ```
+
+La console del container in Proxmox resta nera: il log della pagina non compare lì.
+
+- **`PALINSESTO_AMMESSI`**: con Docker o Podman le richieste arrivano dal bridge del motore
+  di container, non da localhost, e senza questa voce la pagina risponde 403. Docker usa di
+  solito `172.16.0.0/12`, Podman `10.88.0.0/16`. In un container LXC di Proxmox arrivano
+  invece direttamente dalla rete: indica il reverse proxy con `PALINSESTO_PROXY` e, solo se
+  vuoi entrare senza passare da lì, la tua rete locale (per esempio `10.0.0.0/24`).
 - **HTTPS**: i cookie dell'accesso vogliono HTTPS, quindi davanti serve un reverse proxy. Per
   provarlo al volo in una rete di cui ti fidi c'è `PALINSESTO_HTTP=1`, da non usare
   su una pagina esposta.
