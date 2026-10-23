@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block titolo %}Accesso · Palinsesto{% endblock %}
+{% block tutto %}
+{# Due moduli (16/10): alcuni password manager compilano utente e password solo se il codice 2FA sta in un modulo a parte; lo script lo copia nel modulo vero all'invio. #}
+<main class="accesso">
+  <div class="scheda-accesso">
+    {% if stemma %}
+    <div class="stemma"><img src="{{ url_for('marchio', nome='logo-scritta.jpg') }}" alt="" width="1000" height="345"></div>
+    <p class="sottotitolo">Palinsesto</p>
+    {% else %}
+    <div class="stemma-neutro"><img src="{{ url_for('marchio', nome='icona-192.png') }}" alt="" width="72" height="72"><b>Palinsesto</b></div>
+    {% endif %}
+    {% if senza_utente %}
+      <p class="avviso">Nessun utente configurato. Sul container, come l'utente del servizio:<br>
+      <code>python3 ~/palinsesto/utente.py</code></p>
+    {% else %}
+      {% if errore %}<p class="errore" role="alert">{{ errore }}</p>{% endif %}
+      <form method="post" action="{{ url_for('accesso') }}" autocomplete="on" id="modulo-accesso">
+      <input type="hidden" name="dopo" value="{{ dopo }}">
+      <label>Utente<input name="nome" autocomplete="username" required autofocus></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      </form>
+      <form method="post" id="modulo-codice">
+      <label>Codice 2FA<input name="codice" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" autocomplete="one-time-code" placeholder="123 456" required></label>
+      </form>
+      <button class="primario" type="submit" form="modulo-accesso">Entra</button>
+    {% endif %}
+  </div>
+</main>
+{% endblock %}

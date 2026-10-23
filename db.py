@@ -1,0 +1,435 @@
+"""Database di Palinsesto: un solo file SQLite, facile da salvare e da spostare.
+
+Dove sta: $PALINSESTO_DATI (predefinito ~/.local/share/palinsesto)/palinsesto.db.
+Le date sono stringhe ISO 'AAAA-MM-GG' nel fuso locale (Europe/Rome): SQLite
+le confronta come testo e l'ordine e' quello giusto.
+
+Due scelte da ricordare:
+- `disponibilita` tiene i provider GREZZI di TMDB (Netflix, «Netflix basic with
+  Ads», «Paramount+ Amazon Channel»...), non i servizi: la mappa provider ->
+  servizio sta in `provider.servizio_id` e si cambia dalle impostazioni senza
+  perdere lo storico.
+- Un titolo o un provider che sparisce da TMDB viene chiuso (`fino`) solo dopo
+  ASSENZE_PER_CHIUDERE notti di fila: i dati di disponibilita' ogni tanto
+  sfarfallano, e un «non e' piu' su Netflix» falso seguito da «arrivato su
+  Netflix» il giorno dopo insegna a ignorare gli avvisi.
+"""
+import os, pathlib, sqlite3
+
+DATI = pathlib.Path(os.environ.get("PALINSESTO_DATI", pathlib.Path.home() / ".local/share/palinsesto"))
+FILE = DATI / "palinsesto.db"
+GIRO_LOCK = "giro.lock"          # accanto al database: un giro alla volta (timer, recupero, tasto)
+GIRO_LOG = "giro-manuale.log"    # l'uscita del giro lanciato dalla pagina
+
+
+def prendi_lucchetto(f):
+    """Apre il file f e lo blocca senza aspettare: il file aperto (da tenere
+    finche' serve), o None se un altro processo lo tiene gia'. Il lucchetto si
+    libera da solo quando il processo finisce, anche se muore. flock su
+    Linux e macOS, msvcrt su Windows (dove fcntl non esiste)."""
+    h = open(f, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            h.seek(0)
+            msvcrt.locking(h.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        h.close()
+        return None
+    return h
+
+
+def lascia_lucchetto(h):
+    if os.name == "nt":
+        import msvcrt
+        h.seek(0)
+        msvcrt.locking(h.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(h, fcntl.LOCK_UN)
+    h.close()
+
+
+def giro_in_corso(cartella=None):
+    """True se un giro tiene il lucchetto adesso (senza prenderlo)."""
+    f = pathlib.Path(cartella or DATI) / GIRO_LOCK
+    if not f.exists():
+        return False
+    h = prendi_lucchetto(f)
+    if h is None:
+        return True
+    lascia_lucchetto(h)
+    return False
+
+
+ASSENZE_PER_CHIUDERE = 2
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (chiave TEXT PRIMARY KEY, valore TEXT);
+
+CREATE TABLE IF NOT EXISTS servizi (
+  id INTEGER PRIMARY KEY,
+  nome TEXT NOT NULL UNIQUE,
+  logo TEXT,
+  ordine INTEGER DEFAULT 100,
+  seguito INTEGER DEFAULT 1,
+  -- abbonamento
+  stato TEXT DEFAULT 'mai' CHECK (stato IN ('attivo','disdetto','mai')),
+  prezzo REAL,
+  ciclo TEXT DEFAULT 'mese' CHECK (ciclo IN ('mese','anno')),
+  rinnovo TEXT,          -- prossimo addebito, se attivo
+  fine TEXT,             -- ultimo giorno utile, se disdetto
+  canale TEXT,           -- diretto, Prime Video Channels, TIM...
+  conserva_mesi INTEGER, -- mesi di cronologia conservata dopo la fine: da verificare, mai inventati
+  note TEXT,
+  pausa_fino TEXT,       -- in pausa fino a (stato resta 'attivo': quel giorno riparte e addebita)
+  pausa_proroghe INTEGER, -- proroghe della pausa ancora possibili, se il servizio le concede
+  pausa_dal TEXT,        -- la pausa comincia al rinnovo, non quando la chiedi: fino ad allora si guarda
+  pausa_durate TEXT      -- durate di pausa che il servizio concede, in giorni ('30,60,90'); vuoto = niente pausa
+);
+
+CREATE TABLE IF NOT EXISTS provider (
+  id INTEGER PRIMARY KEY,          -- provider_id di TMDB
+  nome TEXT NOT NULL,
+  logo TEXT,
+  priorita INTEGER,
+  servizio_id INTEGER REFERENCES servizi(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS titoli (
+  id TEXT PRIMARY KEY,             -- 'movie:603', 'tv:1399'
+  tipo TEXT NOT NULL CHECK (tipo IN ('movie','tv')),
+  tmdb_id INTEGER NOT NULL,
+  titolo TEXT, originale TEXT, anno INTEGER,
+  poster TEXT, sfondo TEXT, trama TEXT, generi TEXT,
+  generi_id TEXT,                  -- id dei generi TMDB, '18,10765': servono ai gusti
+  stato TEXT,                      -- tv: Returning Series / Ended / Canceled...
+  durata INTEGER,
+  prossimo_ep TEXT,                -- data del prossimo episodio annunciato
+  prossimo_ep_sigla TEXT,          -- 'S03E04'
+  dettagli INTEGER DEFAULT 0,      -- 1 = scheda completa, 0 = solo dati da una ricerca
+  aggiornato TEXT,                 -- ultima scheda completa scaricata
+  controllato TEXT                 -- ultima data per cui gli eventi sono stati calcolati
+);
+
+CREATE TABLE IF NOT EXISTS stagioni (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  numero INTEGER, nome TEXT, episodi INTEGER,
+  uscita TEXT,                     -- primo episodio
+  fine TEXT,                       -- ultimo episodio, se noto
+  poster TEXT,
+  PRIMARY KEY (titolo_id, numero)
+);
+
+CREATE TABLE IF NOT EXISTS episodi (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  stagione INTEGER, numero INTEGER,
+  nome TEXT, uscita TEXT, durata INTEGER,
+  PRIMARY KEY (titolo_id, stagione, numero)
+);
+
+-- episodi segnati visti uno per uno; `fonte` dice chi l'ha segnato:
+-- 'mano' dalla pagina, '<fonte>:<entita>' da un eventuale rilevamento automatico...
+CREATE TABLE IF NOT EXISTS visti_ep (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  stagione INTEGER, numero INTEGER,
+  quando TEXT, fonte TEXT,
+  PRIMARY KEY (titolo_id, stagione, numero)
+);
+
+CREATE TABLE IF NOT EXISTS disponibilita (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  provider_id INTEGER,
+  offerta TEXT,                    -- flatrate / ads / free / rent / buy
+  dal TEXT NOT NULL,
+  fino TEXT,                       -- NULL = presente
+  assenze INTEGER DEFAULT 0,       -- notti di fila in cui non c'era
+  assente_il TEXT,                 -- ultima notte contata: rivedere la scheda di giorno non conta doppio
+  PRIMARY KEY (titolo_id, provider_id, offerta, dal)
+);
+
+CREATE TABLE IF NOT EXISTS miei (
+  titolo_id TEXT PRIMARY KEY REFERENCES titoli(id) ON DELETE CASCADE,
+  mi_piace INTEGER DEFAULT 0,
+  visto INTEGER DEFAULT 0,         -- solo film. Una serie non e' mai «vista per sempre»: escono stagioni nuove
+  stagioni_viste TEXT DEFAULT '',  -- '1,2,3': spunte una per una
+  viste_fino TEXT,                 -- serie: viste tutte le stagioni uscite fino a questa data (import, «segna uscite»)
+  avvisi INTEGER DEFAULT 1,
+  aggiunto TEXT,
+  tolto_auto TEXT                  -- data in cui Palinsesto l'ha tolto da «Da vedere» perche' finito
+);
+
+CREATE TABLE IF NOT EXISTS liste (
+  id INTEGER PRIMARY KEY,
+  nome TEXT NOT NULL UNIQUE,
+  ordine INTEGER DEFAULT 100
+);
+
+CREATE TABLE IF NOT EXISTS lista_titoli (
+  lista_id INTEGER REFERENCES liste(id) ON DELETE CASCADE,
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  aggiunto TEXT,
+  PRIMARY KEY (lista_id, titolo_id)
+);
+
+CREATE TABLE IF NOT EXISTS eventi (
+  id INTEGER PRIMARY KEY,
+  chiave TEXT NOT NULL UNIQUE,     -- deduplica: lo stesso fatto non si notifica due volte
+  quando TEXT NOT NULL,
+  tipo TEXT NOT NULL,
+  titolo_id TEXT,
+  servizio_id INTEGER,
+  testo TEXT NOT NULL,
+  notificare INTEGER DEFAULT 1,
+  notificato INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS catalogo (
+  servizio_id INTEGER REFERENCES servizi(id) ON DELETE CASCADE,
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  dal TEXT NOT NULL,
+  fino TEXT,
+  assenze INTEGER DEFAULT 0,
+  assente_il TEXT,
+  PRIMARY KEY (servizio_id, titolo_id, dal)
+);
+
+-- consigli ricalcolati ogni notte dai «consigliati» di TMDB dei miei titoli
+CREATE TABLE IF NOT EXISTS consigliati (
+  titolo_id TEXT PRIMARY KEY REFERENCES titoli(id) ON DELETE CASCADE,
+  punteggio REAL, motivo TEXT,
+  servizi TEXT,                    -- id dei servizi seguiti dove si vede, separati da virgola
+  calcolato TEXT
+);
+
+-- cosa arriva su ogni servizio (non solo i miei titoli), ricalcolato ogni notte
+CREATE TABLE IF NOT EXISTS in_arrivo (
+  servizio_id INTEGER REFERENCES servizi(id) ON DELETE CASCADE,
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  data TEXT NOT NULL,
+  genere TEXT,                     -- 'nuova serie' / 'stagione' / 'episodi'
+  cosa TEXT,                       -- «Stagione 3», «S02E05»...
+  calcolato TEXT,
+  PRIMARY KEY (servizio_id, titolo_id)
+);
+
+-- «Non c'e' davvero»: TMDB (da JustWatch) dice che un titolo e' su un servizio, ma
+-- non e' vero. Quel servizio si ignora per quel titolo finche' TMDB smette di
+-- dirlo: allora la correzione si toglie da sola, e un arrivo vero torna a contare
+CREATE TABLE IF NOT EXISTS correzioni (
+  titolo_id TEXT REFERENCES titoli(id) ON DELETE CASCADE,
+  servizio_id INTEGER REFERENCES servizi(id) ON DELETE CASCADE,
+  quando TEXT,
+  PRIMARY KEY (titolo_id, servizio_id)
+);
+
+-- «Non mi interessa»: mai piu' fra i consigliati ne' fra gli arrivi, e
+-- insegna: chi gli somiglia perde punti
+CREATE TABLE IF NOT EXISTS nascosti (
+  titolo_id TEXT PRIMARY KEY,
+  quando TEXT
+);
+
+-- quanto ogni titolo somiglia ai miei (e ai nascosti, in negativo) secondo i
+-- consigliati di TMDB, PRIMA dei filtri sul voto: la usa «In arrivo», dove le
+-- serie nuove non hanno ancora voti. Ricalcolata ogni notte
+CREATE TABLE IF NOT EXISTS somiglianze (
+  titolo_id TEXT PRIMARY KEY,
+  punti REAL, motivo TEXT,
+  calcolato TEXT
+);
+
+CREATE INDEX IF NOT EXISTS disp_aperte ON disponibilita(titolo_id) WHERE fino IS NULL;
+CREATE INDEX IF NOT EXISTS eventi_quando ON eventi(quando);
+CREATE INDEX IF NOT EXISTS catalogo_aperti ON catalogo(servizio_id) WHERE fino IS NULL;
+
+-- accesso a token (accessi.py): i dispositivi entrati e l'impronta dei
+-- token di rinnovo, mai i token
+CREATE TABLE IF NOT EXISTS dispositivi (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL,           -- dallo User-Agent, per riconoscerlo in Impostazioni
+  gen TEXT NOT NULL,            -- quella dell'utente all'accesso
+  csrf TEXT NOT NULL,           -- stabile per tutta la vita del dispositivo
+  creato INTEGER NOT NULL,      -- secondi epoch
+  ultimo_uso INTEGER NOT NULL,
+  ip TEXT,
+  chiuso INTEGER                -- epoch della chiusura (uscita, riuso, altro dispositivo)
+);
+CREATE TABLE IF NOT EXISTS rinnovi (
+  impronta TEXT PRIMARY KEY,    -- sha256 del token, mai il token
+  dispositivo TEXT NOT NULL REFERENCES dispositivi(id) ON DELETE CASCADE,
+  scade INTEGER NOT NULL,
+  usato INTEGER
+);
+CREATE INDEX IF NOT EXISTS rinnovi_dispositivo ON rinnovi(dispositivo);
+"""
+
+
+def copia_coerente(file=None):
+    """Copia del database in backup/palinsesto.db, coerente anche mentre si scrive
+    (API di backup di SQLite), controllata con integrity_check prima di sostituire
+    la precedente. Per chi fa il backup del volume dei dati."""
+    f = pathlib.Path(file or FILE)
+    dest = f.parent / "backup"
+    dest.mkdir(parents=True, exist_ok=True)
+    nuovo = dest / (f.name + ".nuovo")
+    src = sqlite3.connect(f, timeout=30)
+    dst = sqlite3.connect(nuovo)
+    try:
+        src.backup(dst)
+        esito = dst.execute("PRAGMA integrity_check").fetchone()[0]
+    finally:
+        dst.close(); src.close()
+    if esito != "ok":
+        raise RuntimeError(f"integrity_check: {esito}")
+    nuovo.replace(dest / f.name)
+    return f"{dest / f.name}, {(dest / f.name).stat().st_size} byte"
+
+
+def apri(file=None):
+    f = pathlib.Path(file or FILE)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(f, timeout=30)
+    c.row_factory = sqlite3.Row
+    c.execute("PRAGMA foreign_keys = ON")
+    c.execute("PRAGMA journal_mode = WAL")     # la pagina legge mentre il job notturno scrive
+    c.executescript(SCHEMA)
+    migra(c)
+    if not c.execute("SELECT 1 FROM liste").fetchone():
+        cur = c.execute("INSERT INTO liste (nome, ordine) VALUES ('Da vedere', 1)")
+        meta(c, "lista_da_vedere", cur.lastrowid)
+        c.commit()
+    return c
+
+
+def migra(c):
+    colonne = {r[1] for r in c.execute("PRAGMA table_info(miei)")}
+    if "viste_fino" not in colonne:
+        # fino al 27/09 l'import segnava le serie «viste» con visto=1, che le
+        # escludeva per sempre anche dalle stagioni future: diventano «viste
+        # fino a oggi», il significato inteso
+        c.execute("ALTER TABLE miei ADD COLUMN viste_fino TEXT")
+        c.execute("UPDATE miei SET viste_fino=date('now','localtime'), visto=0 WHERE visto=1 AND titolo_id LIKE 'tv:%'")
+        c.commit()
+    if "tolto_auto" not in colonne:
+        c.execute("ALTER TABLE miei ADD COLUMN tolto_auto TEXT")
+        c.commit()
+    if "rimanda" not in colonne:
+        # 17/10: un titolo rimandato dal piano: 'gratis' = solo nei mesi gia' pagati,
+        # una data = non prima di quel giorno; NULL = come gli altri
+        c.execute("ALTER TABLE miei ADD COLUMN rimanda TEXT")
+        c.commit()
+    if "generi_id" not in {r[1] for r in c.execute("PRAGMA table_info(titoli)")}:
+        c.execute("ALTER TABLE titoli ADD COLUMN generi_id TEXT")   # riempita dal giro notturno
+        c.commit()
+    serv = {r[1] for r in c.execute("PRAGMA table_info(servizi)")}
+    if "pausa_fino" not in serv:
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_fino TEXT")
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_proroghe INTEGER")
+        c.commit()
+    serv = {r[1] for r in c.execute("PRAGMA table_info(servizi)")}
+    if "pausa_dal" not in serv:
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_dal TEXT")
+        c.execute("ALTER TABLE servizi ADD COLUMN pausa_durate TEXT")
+        # cercato il 29/09: Netflix un mese alla volta, prorogabile fino a tre;
+        # Disney+ in Italia 2, 4 o 8 settimane (dove la concede). Dal rinnovo, per
+        # tutti e due. Si correggono da Abbonamenti se cambiano
+        c.execute("UPDATE servizi SET pausa_durate='30x3' WHERE nome='Netflix' AND pausa_durate IS NULL")
+        c.execute("UPDATE servizi SET pausa_durate='14,28,56' WHERE nome='Disney+' AND pausa_durate IS NULL")
+        c.commit()
+    # 29/09: Netflix si mette in pausa un mese alla volta e poi si proroga: «30x3».
+    # Una volta sola: dopo, la scelta fatta in Abbonamenti non si tocca piu'
+    if not meta(c, "migrato_pausa_passi"):
+        c.execute("UPDATE servizi SET pausa_durate='30x3' WHERE nome='Netflix' AND pausa_durate='30,60,90'")
+        meta(c, "migrato_pausa_passi", 1)
+        c.commit()
+    if not meta(c, "lista_da_vedere"):
+        r = c.execute("SELECT id FROM liste WHERE nome='Da vedere'").fetchone() or \
+            c.execute("SELECT id FROM liste ORDER BY ordine, id LIMIT 1").fetchone()
+        if r:
+            meta(c, "lista_da_vedere", r[0]); c.commit()
+
+
+def meta(c, chiave, valore=None):
+    if valore is None:
+        r = c.execute("SELECT valore FROM meta WHERE chiave=?", (chiave,)).fetchone()
+        return r[0] if r else None
+    c.execute("INSERT INTO meta VALUES (?,?) ON CONFLICT(chiave) DO UPDATE SET valore=excluded.valore",
+              (chiave, str(valore)))
+
+
+def viste(riga):
+    """Stagioni spuntate una per una in una riga di `miei`."""
+    s = (riga["stagioni_viste"] if riga else "") or ""
+    return {int(x) for x in s.split(",") if x.strip().isdigit()}
+
+
+def vista(numero, uscita, spuntate, viste_fino):
+    """Una stagione e' vista se spuntata, o se uscita entro «viste fino al»."""
+    return numero in spuntate or bool(viste_fino and uscita and uscita <= viste_fino)
+
+
+# Tre modi di dire «visto», dal piu' fine al piu' grosso: l'episodio spuntato
+# (visti_ep), la stagione spuntata intera (miei.stagioni_viste) e «tutto quello
+# uscito fino al» (miei.viste_fino, dall'import). Un episodio e' visto se lo dice
+# uno qualunque dei tre. Le due scorciatoie valgono anche per episodi che non
+# conosciamo ancora: per questo non si convertono subito in spunte.
+
+def episodi_visti(c, titolo_id, riga):
+    """{stagione: {numeri}} degli episodi visti, per qualunque delle tre vie."""
+    sv = viste(riga)
+    vf = riga["viste_fino"] if riga else None
+    out = {}
+    for r in c.execute("SELECT stagione, numero FROM visti_ep WHERE titolo_id=?", (titolo_id,)):
+        out.setdefault(r[0], set()).add(r[1])
+    for e in c.execute("SELECT stagione, numero, uscita FROM episodi WHERE titolo_id=?", (titolo_id,)):
+        if vista(e["stagione"], e["uscita"], sv, vf):
+            out.setdefault(e["stagione"], set()).add(e["numero"])
+    return out
+
+
+def riepilogo(c, titolo_id, riga, oggi):
+    """{stagione: dict} con totale, usciti, visti, da_vedere (episodi usciti non visti),
+    noti (episodi conosciuti) e vista (niente da vedere e niente ancora da uscire).
+    Senza episodi noti vale la stagione intera."""
+    sv = viste(riga)
+    vf = riga["viste_fino"] if riga else None
+    visti = episodi_visti(c, titolo_id, riga)
+    eps = {}
+    for e in c.execute("SELECT stagione, numero, uscita FROM episodi WHERE titolo_id=? ORDER BY stagione, numero",
+                       (titolo_id,)):
+        eps.setdefault(e["stagione"], []).append(e)
+    out = {}
+    for s in c.execute("SELECT numero, uscita FROM stagioni WHERE titolo_id=?", (titolo_id,)):
+        n = s["numero"]
+        if eps.get(n):
+            tutti = [e["numero"] for e in eps[n]]
+            usciti = [e["numero"] for e in eps[n] if e["uscita"] and e["uscita"] <= oggi]
+            v = visti.get(n, set()) & set(tutti)
+            da = [x for x in usciti if x not in v]
+            out[n] = dict(noti=True, totale=len(tutti), usciti=len(usciti), visti=len(v), da_vedere=len(da),
+                          vista=bool(usciti) and not da and len(usciti) == len(tutti), numeri_visti=v)
+        else:
+            vv = vista(n, s["uscita"], sv, vf)
+            out[n] = dict(noti=False, totale=None, usciti=None, visti=None, da_vedere=None, vista=vv, numeri_visti=set())
+    return out
+
+
+def materializza(c, titolo_id, riga, oggi):
+    """Trasforma le due scorciatoie in spunte per episodio, dove gli episodi sono
+    noti, prima di togliere una spunta: togliere l'episodio 3 non deve togliere
+    tutta la stagione, ne' tutto cio' che era «visto fino al»."""
+    sv = viste(riga)
+    vf = riga["viste_fino"] if riga else None
+    noti = {r[0] for r in c.execute("SELECT DISTINCT stagione FROM episodi WHERE titolo_id=?", (titolo_id,))}
+    for n, numeri in episodi_visti(c, titolo_id, riga).items():
+        c.executemany("INSERT OR IGNORE INTO visti_ep VALUES (?,?,?,?,'mano')",
+                      [(titolo_id, n, e, oggi) for e in numeri])
+    # le stagioni di cui non conosciamo gli episodi restano intere
+    resto = {s["numero"] for s in c.execute("SELECT numero, uscita FROM stagioni WHERE titolo_id=?", (titolo_id,))
+             if s["numero"] not in noti and vista(s["numero"], s["uscita"], sv, vf)}
+    c.execute("UPDATE miei SET stagioni_viste=?, viste_fino=NULL WHERE titolo_id=?",
+              (",".join(map(str, sorted(resto))), titolo_id))

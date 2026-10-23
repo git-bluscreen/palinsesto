@@ -1,0 +1,10 @@
+[Unit]
+Description=Palinsesto: giro notturno alle 05:30
+
+[Timer]
+OnCalendar=*-*-* 05:30
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

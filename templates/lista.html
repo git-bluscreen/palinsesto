@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}{{ nome }} · Palinsesto{% endblock %}
+{% block corpo %}
+<h1 class="pagina-titolo">{{ nome }}</h1>
+<form class="filtri" method="get">
+  <select name="servizio" aria-label="Servizio">
+    <option value="">Tutti i servizi</option>
+    {% for s in servizi %}<option value="{{ s.id }}" {% if f.servizio == s.id %}selected{% endif %}>{{ s.nome }}</option>{% endfor %}
+  </select>
+  <select name="tipo" aria-label="Tipo">
+    <option value="">Film e serie</option>
+    <option value="movie" {% if f.tipo == 'movie' %}selected{% endif %}>Solo film</option>
+    <option value="tv" {% if f.tipo == 'tv' %}selected{% endif %}>Solo serie</option>
+  </select>
+  <label class="spunta-filtro"><input type="checkbox" name="da_vedere" value="1" {% if f.da_vedere %}checked{% endif %}> Da vedere adesso</label>
+  <label class="spunta-filtro"><input type="checkbox" name="miei_abb" value="1" {% if f.miei_abb %}checked{% endif %}> Sui miei abbonamenti</label>
+  <button class="tenue">Filtra</button>
+</form>
+{{ mm.griglia(elenco, 'Nessun titolo' ~ (' con questi filtri.' if f.servizio or f.da_vedere or f.miei_abb or f.tipo else ': cercane uno e aggiungilo.')) }}
+{% endblock %}

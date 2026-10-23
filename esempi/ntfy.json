@@ -1,0 +1,5 @@
+{
+  "url":    "https://ntfy.example.org/",
+  "topic":  "streaming",
+  "token":  "tk_incolla_qui_il_token_di_ntfy"
+}

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}{{ q ~ ' · ' if q }}Cerca · Palinsesto{% endblock %}
+{% block corpo %}
+<form action="{{ url_for('cerca') }}" class="cerca-grande" role="search">
+  <input type="search" name="q" value="{{ q }}" placeholder="Titolo di un film o di una serie" aria-label="Cerca" {% if not q %}autofocus{% endif %}>
+  <button class="primario">Cerca</button>
+</form>
+{% if errore %}<p class="errore">{{ errore }}</p>{% endif %}
+{% if q %}
+  {% if risultati %}
+  <div class="griglia">
+  {% for x in risultati %}
+    <div class="con-azione">
+      {{ mm.copertina(x) }}
+      {% set tipo, n = x.t.id.split(':') %}
+      <form method="post" action="{{ url_for('scheda_azione', tipo=tipo, tmdb_id=n|int) }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="lista">
+        <input type="hidden" name="lista" value="{{ prima.id }}"><input type="hidden" name="torna" value="{{ request.full_path }}">
+        {% if x.t.id in dentro %}<button class="interruttore acceso piccolo" aria-pressed="true">✓ {{ prima.nome }}</button>
+        {% else %}<button class="interruttore piccolo" aria-pressed="false">+ {{ prima.nome }}</button>{% endif %}
+      </form>
+    </div>
+  {% endfor %}
+  </div>
+  {% else %}<p class="vuoto">Nessun risultato per «{{ q }}».</p>{% endif %}
+{% endif %}
+{% endblock %}

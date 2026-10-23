@@ -1,0 +1,35 @@
+{# Il piano e' cambiato rispetto a quello approvato: cosa cambia, quanto costa ogni
+   titolo nuovo, e la scelta di rimandarlo o di andare bene cosi'. Variabili: cam, csrf, torna #}
+{% if cam %}
+<section class="piano-cambiato riquadro" id="piano-cambiato">
+  <h2>📌 Il piano è cambiato</h2>
+  <p>
+    {% if cam.piu %}In più: {% for x in cam.piu %}<b>{{ x.s.nome }}</b> dal {{ breve(x.dal) }}{{ ', ' if not loop.last }}{% endfor %}.{% endif %}
+    {% if cam.meno %}In meno: {% for x in cam.meno %}<b>{{ x.s.nome }}</b> dal {{ breve(x.dal) }}{{ ', ' if not loop.last }}{% endfor %}.{% endif %}
+    {% if cam.delta > 0 %}Costa <b>{{ cam.delta|euro }}</b> in più.{% elif cam.delta < 0 %}Costa <b>{{ (-cam.delta)|euro }}</b> in meno.{% endif %}
+  </p>
+  {% if cam.nuovi %}
+  <ul class="piano-nuovi">
+    {% for n in cam.nuovi %}
+    <li>
+      <span class="piano-nuovo-titolo"><a href="{{ url_for('scheda', tipo=n.t.tipo, tmdb_id=n.t.tmdb_id) }}">{{ n.t.titolo }}</a>
+        <small>{% if n.costo > 0.005 %}costa {{ n.costo|euro }} in più{% elif n.costo < -0.005 %}fa spendere {{ (-n.costo)|euro }} in meno{% else %}non costa niente in più{% endif %}</small></span>
+      {% if n.costo > 0.005 %}
+      <span class="piano-rimanda">
+        <form method="post" action="{{ url_for('rimanda') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ n.t.id }}"><input type="hidden" name="modo" value="gratis"><input type="hidden" name="torna" value="{{ torna }}">
+          <button class="tenue">Solo se gratis</button></form>
+        <form method="post" action="{{ url_for('rimanda') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ n.t.id }}"><input type="hidden" name="modo" value="data"><input type="hidden" name="torna" value="{{ torna }}">
+          <label class="nascosto-vista" for="rimanda-{{ loop.index }}">Non prima del</label>
+          <input type="date" id="rimanda-{{ loop.index }}" name="data" required min="{{ domani }}">
+          <button class="tenue">Non prima del…</button></form>
+      </span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <form method="post" action="{{ url_for('piano_visto') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="{{ torna }}">
+    <button class="primario">Va bene così</button></form>
+  {% if torna != '/piano' %}<a href="{{ url_for('piano') }}" class="collegamento">vedi il piano ›</a>{% endif %}
+</section>
+{% endif %}

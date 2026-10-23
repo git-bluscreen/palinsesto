@@ -1,0 +1,5 @@
+{
+  "url":      "https://nextcloud.example.org/remote.php/dav/",
+  "utente":   "palinsesto",
+  "password": "password-per-app-di-nextcloud"
+}

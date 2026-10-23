@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block titolo %}Risparmio · Palinsesto{% endblock %}
+{% macro mesi(righe, con_titoli=False) %}
+<ul class="risparmio-mesi">
+{% for m in righe %}
+  <li><span class="risparmio-periodo">{{ breve(m.inizio) }} – {{ breve(m.fine) }}</span>
+    {% if m.servizi %}{% for s in m.servizi %}<span class="etichetta v-attiva">{{ s.nome }}</span> {% endfor %}{% else %}<span class="tenue">nessuna spesa</span>{% endif %}
+    {% if con_titoli and m.titoli %}<small class="risparmio-titoli">{% for y in m.titoli %}{{ y.t.titolo }}{% if y.t.tipo == 'tv' %} ({{ y.cosa|lower }}){% endif %} · {{ y.ore|ore }}{{ ', ' if not loop.last }}{% endfor %}</small>{% endif %}
+  </li>
+{% endfor %}
+</ul>
+{% endmacro %}
+{% block corpo %}
+<h1 class="pagina-titolo">Si può spendere meno?</h1>
+<p class="nota"><a href="{{ url_for('piano') }}">‹ Piano dei prossimi mesi</a></p>
+
+{% if r is none %}
+<p class="riquadro attesa-calcolo" data-ricarica="2"><span class="rotellina"></span> Sto cercando la combinazione più economica: può volerci qualche decina di secondi. La pagina si aggiorna da sola.</p>
+{% elif r.errore %}
+<p class="allarme riquadro">Il confronto non è riuscito: {{ r.errore }}</p>
+{% elif r.minimo is none %}
+<p class="allarme riquadro">Il confronto non si può fare: il piano non torna coi suoi stessi conti. È un errore di Palinsesto, non dei tuoi dati.</p>
+{% else %}
+<div class="risparmio-cifre">
+  <p class="riquadro"><small>Col piano</small><b>{{ r.piano|euro }}</b></p>
+  <p class="riquadro"><small>{{ 'Il minimo' if r.esatto else 'Il meno caro trovato' }}</small><b>{{ r.minimo|euro }}</b></p>
+</div>
+<p class="riepilogo">
+{% if r.risparmio and r.risparmio >= 0.01 %}Si potrebbero risparmiare altri <b>{{ r.risparmio|euro }}</b> in sei mesi, vedendo le stesse cose.
+{% else %}<b>Il piano è già il più economico</b>{% if not r.esatto %} fra le combinazioni provate{% endif %}: vedendo le stesse cose non si spende meno.{% endif %}
+</p>
+<p class="nota">Stesse regole del piano: {{ r.titoli }} titoli, {{ r.ore|ore }} da guardare, ogni titolo da quando è pronto, senza superare le ore del mese. Il minimo non tiene conto delle comodità del piano: continuare un servizio già acceso, non far aspettare un titolo troppi mesi, guardare un servizio alla volta.{% if not r.esatto %} La ricerca si è fermata dopo {{ r.secondi|int }} secondi senza finire: potrebbe esserci di meglio.{% endif %}</p>
+
+{% if r.risparmio and r.risparmio >= 0.01 %}
+<h2>Cosa pagare, mese per mese</h2>
+<div class="risparmio-confronto">
+  <section class="riquadro"><h3>Col piano · {{ r.piano|euro }}</h3>{{ mesi(r.piano_mesi) }}</section>
+  <section class="riquadro"><h3>Il più economico · {{ r.minimo|euro }}</h3>{{ mesi(r.minimo_mesi, True) }}</section>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

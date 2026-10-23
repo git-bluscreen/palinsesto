@@ -1,0 +1,10 @@
+[Unit]
+Description=Palinsesto: recupero alle 08:30 se il giro notturno e' fallito
+
+[Timer]
+OnCalendar=*-*-* 08:30
+# niente Persistent: un recupero perso non si recupera all'avvio, ci pensa il giro dopo
+Persistent=false
+
+[Install]
+WantedBy=timers.target

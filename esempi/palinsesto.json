@@ -1,0 +1,5 @@
+{
+  "pagina":  "https://palinsesto.example.org",
+  "proxy":   ["192.0.2.10"],
+  "ammessi": ["192.0.2.0/24"]
+}

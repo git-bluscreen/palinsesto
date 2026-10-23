@@ -1,0 +1,1160 @@
+"""Cuore di Palinsesto, condiviso fra il job notturno e la pagina:
+
+- salva_scheda(): scrive una scheda TMDB nel database e CONFRONTA con quella
+  di prima, producendo gli eventi (arrivi, partenze, stagioni, fine serie);
+- consigli(): il verdetto per servizio, «Conviene?»;
+- scadenze(): avanza i rinnovi passati e produce gli eventi degli abbonamenti.
+
+Regola degli eventi: un titolo visto per la prima volta fa da BASE e non
+produce nulla (`titoli.controllato` vuoto), altrimenti aggiungere una serie
+con 5 stagioni darebbe 5 «stagione uscita» in un colpo.
+"""
+import calendar, collections, datetime as dt
+
+from db import ASSENZE_PER_CHIUDERE, riepilogo, viste, vista
+
+ABBONAMENTO = ("flatrate", "free", "ads")      # offerte che un abbonamento copre
+OFFERTE = {"flatrate": "abbonamento", "free": "gratis", "ads": "con pubblicità",
+           "rent": "noleggio", "buy": "acquisto"}
+STATI_FINE = {"Ended": "conclusa", "Canceled": "cancellata"}
+GIORNI_ANNUNCI = 90        # stagioni in arrivo considerate dal consigliere
+GIORNI_RINNOVO = 3         # avviso prima di un rinnovo
+GIORNI_CRONOLOGIA = 30     # avviso prima che un servizio cancelli la cronologia
+
+
+def in_pausa(s, oggi):
+    """In pausa adesso: attivo sulla carta, ma non si usa e non costa fino a
+    `pausa_fino`, quando riparte da solo e addebita. Una pausa chiesta comincia
+    al rinnovo (`pausa_dal`): fino ad allora il servizio si usa normalmente."""
+    return pausa_chiesta(s, oggi) and not (s["pausa_dal"] and data(s["pausa_dal"]) > oggi)
+
+
+def pausa_chiesta(s, oggi):
+    """Una pausa in corso o gia' chiesta per il prossimo rinnovo."""
+    return bool(s["stato"] == "attivo" and s["pausa_fino"] and data(s["pausa_fino"]) > oggi)
+
+
+def pausa_programmata(s, oggi):
+    """Chiesta ma non ancora cominciata: il servizio e' pagato fino al giorno prima."""
+    return pausa_chiesta(s, oggi) and not in_pausa(s, oggi)
+
+
+def passo_pausa(s):
+    """(giorni, volte) se la pausa si prende a passi, uno alla volta e poi si
+    proroga («30x3» = Netflix: un mese, prorogabile fino a tre); None se la
+    durata si sceglie all'inizio («14,28,56» = Disney+)."""
+    import re
+    m = re.fullmatch(r"\s*(\d+)\s*x\s*(\d+)\s*", s["pausa_durate"] or "")
+    return (int(m.group(1)), int(m.group(2))) if m and 0 < int(m.group(1)) <= 366 and 0 < int(m.group(2)) <= 12 else None
+
+
+def durate_pausa(s):
+    """Durate di pausa possibili in tutto, in giorni, dalla piu' corta."""
+    passo = passo_pausa(s)
+    if passo:
+        return [passo[0] * i for i in range(1, passo[1] + 1)]
+    return sorted({int(x) for x in (s["pausa_durate"] or "").split(",") if x.strip().isdigit() and 0 < int(x) <= 366})
+
+
+def iso(d):
+    return d.isoformat() if d else None
+
+
+def data(s):
+    return dt.date.fromisoformat(s) if s else None
+
+
+def gm(s):
+    """'2026-10-03' -> '03/10/2026'"""
+    return data(s).strftime("%d/%m/%Y") if s else ""
+
+
+def piu_mesi(d, n):
+    m = d.month - 1 + n
+    a, m = d.year + m // 12, m % 12 + 1
+    return d.replace(year=a, month=m, day=min(d.day, calendar.monthrange(a, m)[1]))
+
+
+# --- eventi -------------------------------------------------------------------
+def evento(c, chiave, tipo, testo, oggi, titolo_id=None, servizio_id=None, notificare=True):
+    """Registra un fatto una volta sola: la chiave e' la deduplica."""
+    cur = c.execute("INSERT OR IGNORE INTO eventi (chiave, quando, tipo, titolo_id, servizio_id, testo, notificare) "
+                    "VALUES (?,?,?,?,?,?,?)", (chiave, iso(oggi), tipo, titolo_id, servizio_id, testo, int(notificare)))
+    return cur.rowcount == 1
+
+
+def servizi_disponibili(c, titolo_id, grezzi=False):
+    """{servizio_id: nome} dove il titolo si vede con un abbonamento, adesso."""
+    q = f"""SELECT DISTINCT s.id, s.nome FROM disponibilita d
+            JOIN provider p ON p.id = d.provider_id JOIN servizi s ON s.id = p.servizio_id
+            WHERE d.titolo_id = ? AND d.fino IS NULL AND d.offerta IN ({",".join("?" * len(ABBONAMENTO))})
+            AND s.seguito = 1""" + ("" if grezzi else """
+            AND NOT EXISTS (SELECT 1 FROM correzioni k WHERE k.titolo_id = d.titolo_id AND k.servizio_id = s.id)""")
+    return {r["id"]: r["nome"] for r in c.execute(q, (titolo_id, *ABBONAMENTO))}
+
+
+# --- schede -------------------------------------------------------------------
+def salva_base(c, tipo, x):
+    """Titolo visto solo in una ricerca o in un elenco: dati minimi, senza
+    sovrascrivere una scheda completa gia' presente."""
+    from tmdb import anno_di, titolo_di, originale_di
+    tid = f"{tipo}:{x['id']}"
+    generi = ",".join(map(str, x.get("genre_ids") or [])) or None
+    c.execute("""INSERT INTO titoli (id, tipo, tmdb_id, titolo, originale, anno, poster, sfondo, trama, generi_id)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(id) DO UPDATE SET
+                   titolo=excluded.titolo, poster=COALESCE(excluded.poster, poster),
+                   trama=CASE WHEN dettagli=1 THEN trama ELSE excluded.trama END,
+                   generi_id=COALESCE(generi_id, excluded.generi_id)""",
+              (tid, tipo, x["id"], titolo_di(x), originale_di(x), anno_di(x),
+               x.get("poster_path"), x.get("backdrop_path"), x.get("overview"), generi))
+    return tid
+
+
+def salva_episodi(c, tid, stagione, episodi):
+    for e in episodi:
+        if e.get("episode_number") is None:
+            continue
+        c.execute("""INSERT INTO episodi (titolo_id, stagione, numero, nome, uscita, durata) VALUES (?,?,?,?,?,?)
+                     ON CONFLICT(titolo_id, stagione, numero) DO UPDATE SET
+                     nome=excluded.nome, uscita=excluded.uscita, durata=excluded.durata""",
+                  (tid, stagione, e["episode_number"], e.get("name"), e.get("air_date"), e.get("runtime")))
+
+
+def salva_scheda(c, api, tipo, tmdb_id, oggi, con_stagioni=True):
+    """Scarica e salva la scheda completa; ritorna (titolo_id, [testi degli eventi nuovi])."""
+    from tmdb import anno_di, titolo_di, originale_di
+    d = api.scheda(tipo, tmdb_id)
+    if d is None:
+        return None, []
+    tid = f"{tipo}:{tmdb_id}"
+    prima = c.execute("SELECT * FROM titoli WHERE id=?", (tid,)).fetchone()
+    base = not prima or not prima["controllato"]
+    mio = c.execute("SELECT * FROM miei WHERE titolo_id=?", (tid,)).fetchone()
+    notif = bool(mio and mio["avvisi"])
+    nome = titolo_di(d)
+    nuovi = []
+
+    def ev(chiave, tipo_ev, testo, servizio_id=None):
+        if not base and evento(c, chiave, tipo_ev, testo, oggi, tid, servizio_id, notif):
+            nuovi.append(testo)
+
+    prossimo = d.get("next_episode_to_air") or {}
+    c.execute("""INSERT INTO titoli (id, tipo, tmdb_id) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING""",
+              (tid, tipo, tmdb_id))
+    c.execute("""UPDATE titoli SET titolo=?, originale=?, anno=?, poster=?, sfondo=?, trama=?, generi=?, generi_id=?,
+                 stato=?, durata=?, prossimo_ep=?, prossimo_ep_sigla=?, dettagli=1, aggiornato=?
+                 WHERE id=?""",
+              (nome, originale_di(d), anno_di(d), d.get("poster_path"), d.get("backdrop_path"),
+               d.get("overview"), ", ".join(g["name"] for g in d.get("genres", [])),
+               ",".join(str(g["id"]) for g in d.get("genres", [])) or None,
+               d.get("status"), d.get("runtime") or (d.get("episode_run_time") or [None])[0],
+               prossimo.get("air_date"),
+               f"S{prossimo['season_number']:02d}E{prossimo['episode_number']:02d}" if prossimo else None,
+               dt.datetime.now().isoformat(timespec="seconds"), tid))
+
+    # --- disponibilita' -------------------------------------------------------
+    prima_serv = servizi_disponibili(c, tid)
+    it = (d.get("watch/providers") or {}).get("results", {}).get("IT", {})
+    ora = set()
+    for offerta in OFFERTE:
+        for p in it.get(offerta, []):
+            c.execute("INSERT INTO provider (id, nome, logo, priorita) VALUES (?,?,?,?) "
+                      "ON CONFLICT(id) DO UPDATE SET nome=excluded.nome, logo=excluded.logo",
+                      (p["provider_id"], p["provider_name"], p.get("logo_path"), p.get("display_priority")))
+            ora.add((p["provider_id"], offerta))
+    aperte = {(r["provider_id"], r["offerta"]): r for r in
+              c.execute("SELECT * FROM disponibilita WHERE titolo_id=? AND fino IS NULL", (tid,))}
+    for k in ora - aperte.keys():
+        c.execute("INSERT OR IGNORE INTO disponibilita (titolo_id, provider_id, offerta, dal) VALUES (?,?,?,?)",
+                  (tid, *k, iso(oggi)))
+    for k, r in aperte.items():
+        if k in ora:
+            if r["assenze"]:
+                c.execute("UPDATE disponibilita SET assenze=0, assente_il=NULL WHERE titolo_id=? AND provider_id=? "
+                          "AND offerta=? AND fino IS NULL", (tid, *k))
+        elif r["assente_il"] != iso(oggi):
+            n = r["assenze"] + 1
+            c.execute("UPDATE disponibilita SET assenze=?, assente_il=?, fino=? WHERE titolo_id=? AND provider_id=? "
+                      "AND offerta=? AND fino IS NULL",
+                      (n, iso(oggi), iso(oggi) if n >= ASSENZE_PER_CHIUDERE else None, tid, *k))
+    dopo_serv = servizi_disponibili(c, tid)
+    # «non c'e' davvero»: quando TMDB smette di dirlo, la correzione ha finito il
+    # suo lavoro e si toglie; se un giorno arriva davvero, e' un arrivo vero
+    grezzi = servizi_disponibili(c, tid, grezzi=True)
+    for (k,) in c.execute("SELECT servizio_id FROM correzioni WHERE titolo_id=?", (tid,)).fetchall():
+        if k not in grezzi:
+            c.execute("DELETE FROM correzioni WHERE titolo_id=? AND servizio_id=?", (tid, k))
+    for sid in dopo_serv.keys() - prima_serv.keys():
+        ev(f"arrivo:{tid}:{sid}:{iso(oggi)}", "arrivo", f"«{nome}» è arrivato su {dopo_serv[sid]}", sid)
+    for sid in prima_serv.keys() - dopo_serv.keys():
+        ev(f"partenza:{tid}:{sid}:{iso(oggi)}", "partenza", f"«{nome}» non è più su {prima_serv[sid]}", sid)
+    dove = " — su " + ", ".join(sorted(dopo_serv.values())) if dopo_serv else ""
+
+    # --- stagioni -------------------------------------------------------------
+    if tipo == "tv":
+        vecchie = {r["numero"]: r for r in c.execute("SELECT * FROM stagioni WHERE titolo_id=?", (tid,))}
+        controllato = data(prima["controllato"]) if prima and prima["controllato"] else oggi
+        for s in d.get("seasons", []):
+            n = s["season_number"]
+            if n == 0:
+                continue        # «Speciali»: non sono una stagione da aspettare
+            uscita = s.get("air_date")
+            fine = vecchie[n]["fine"] if n in vecchie else None
+            # la fine di una stagione (ultimo episodio) chiede una chiamata in piu':
+            # solo per quelle in corso o in arrivo, e finche' non e' nota
+            corrente = not uscita or data(uscita) >= oggi - dt.timedelta(days=150)
+            senza_ep = not c.execute("SELECT 1 FROM episodi WHERE titolo_id=? AND stagione=?", (tid, n)).fetchone()
+            if con_stagioni and ((corrente and (not fine or data(fine) >= oggi)) or (senza_ep and mio)):
+                st = api.stagione(tmdb_id, n)
+                eps = (st or {}).get("episodes", [])
+                salva_episodi(c, tid, n, eps)
+                date = [e.get("air_date") for e in eps]
+                if date and all(date):
+                    fine = max(date)
+            c.execute("""INSERT INTO stagioni (titolo_id, numero, nome, episodi, uscita, fine, poster)
+                         VALUES (?,?,?,?,?,?,?) ON CONFLICT(titolo_id, numero) DO UPDATE SET
+                         nome=excluded.nome, episodi=excluded.episodi, uscita=excluded.uscita,
+                         fine=excluded.fine, poster=excluded.poster""",
+                      (tid, n, s.get("name"), s.get("episode_count"), uscita, fine, s.get("poster_path")))
+            if n not in vecchie:
+                quando = f", dal {gm(uscita)}" if uscita and data(uscita) > oggi else ""
+                ev(f"annuncio:{tid}:S{n}", "annuncio", f"«{nome}»: stagione {n} annunciata{quando}")
+            elif uscita and vecchie[n]["uscita"] != uscita and data(uscita) > oggi:
+                ev(f"data:{tid}:S{n}:{uscita}", "annuncio", f"«{nome}»: la stagione {n} esce il {gm(uscita)}")
+            if uscita and controllato < data(uscita) <= oggi:
+                ev(f"uscita:{tid}:S{n}", "uscita", f"«{nome}»: è iniziata la stagione {n}{dove}")
+            if fine and controllato < data(fine) <= oggi:
+                ev(f"completa:{tid}:S{n}", "completa", f"«{nome}»: stagione {n} completa, tutti gli episodi usciti{dove}")
+        if prima and prima["stato"] and prima["stato"] != d.get("status") and d.get("status") in STATI_FINE:
+            ev(f"fine:{tid}", "fine", f"«{nome}»: serie {STATI_FINE[d['status']]}, non ci saranno altre stagioni")
+
+    c.execute("UPDATE titoli SET controllato=? WHERE id=?", (iso(oggi), tid))
+    return tid, nuovi
+
+
+# --- consigliere --------------------------------------------------------------
+def da_vedere(c, oggi):
+    """Per ogni titolo mio: cosa c'e' da vedere e cosa sta arrivando.
+    Ritorna {titolo_id: dict(pronte=[n..], in_corso=[(n, fine)], in_arrivo=[(n, uscita)])}."""
+    out = {}
+    for t in c.execute("SELECT t.*, m.visto, m.stagioni_viste, m.viste_fino, m.rimanda FROM miei m JOIN titoli t ON t.id=m.titolo_id"):
+        if t["tipo"] == "movie":
+            if t["visto"]:
+                continue
+            out[t["id"]] = dict(t=t, pronte=[0], in_corso=[], in_arrivo=[], episodi=0)
+            continue
+        riep = riepilogo(c, t["id"], t, iso(oggi))
+        pronte, in_corso, in_arrivo, episodi = [], [], [], 0
+        sigla_n = int(t["prossimo_ep_sigla"][1:3]) if t["prossimo_ep_sigla"] else None
+        for s in c.execute("SELECT * FROM stagioni WHERE titolo_id=? ORDER BY numero", (t["id"],)):
+            n, u, f = s["numero"], data(s["uscita"]), data(s["fine"])
+            r = riep.get(n) or {}
+            if r.get("vista"):
+                continue
+            if u and u <= oggi:
+                if r.get("noti"):
+                    # tutti gli episodi usciti sono visti, ne mancano di futuri: in pari, si aspetta
+                    completa = r["usciti"] == r["totale"] or (f and f <= oggi)
+                    if completa and r["da_vedere"]:
+                        pronte.append(n); episodi += r["da_vedere"]
+                    elif not completa:
+                        in_corso.append((n, f or data(t["prossimo_ep"])))
+                elif (f and f > oggi) or (not f and sigla_n == n):
+                    in_corso.append((n, f or data(t["prossimo_ep"])))
+                else:
+                    pronte.append(n)
+            elif u and u <= oggi + dt.timedelta(days=GIORNI_ANNUNCI):
+                in_arrivo.append((n, u))
+        if pronte or in_corso or in_arrivo:
+            out[t["id"]] = dict(t=t, pronte=pronte, in_corso=in_corso, in_arrivo=in_arrivo, episodi=episodi)
+    return out
+
+
+def finito(c, t, oggi, dv):
+    """Niente da vedere adesso. Film: segnato visto. Serie: almeno una stagione
+    uscita, niente di uscito da vedere e nessuna stagione in corso (una serie in
+    pari con episodi in arrivo non e' finita). Senza scheda completa: mai."""
+    if t["tipo"] == "movie":
+        return bool(t["visto"])
+    if not t["dettagli"]:
+        return False
+    x = dv.get(t["id"])
+    if x and (x["pronte"] or x["in_corso"]):
+        return False
+    return bool(c.execute("SELECT 1 FROM stagioni WHERE titolo_id=? AND numero>0 AND uscita<=?",
+                          (t["id"], iso(oggi))).fetchone())
+
+
+def sincronizza_da_vedere(c, oggi, solo=None):
+    """Toglie da «Da vedere» cio' che e' finito, e ci rimette cio' che Palinsesto
+    stesso aveva tolto quando torna qualcosa da vedere (stagione nuova, spunta
+    tolta). Un titolo tolto A MANO non rientra: `tolto_auto` resta vuoto.
+    Ritorna (tolti, rimessi) come titoli."""
+    from db import meta
+    lid = int(meta(c, "lista_da_vedere") or 0)
+    if not lid or not c.execute("SELECT 1 FROM liste WHERE id=?", (lid,)).fetchone():
+        return [], []
+    dv = da_vedere(c, oggi)
+    q = "SELECT t.*, m.visto, m.tolto_auto FROM miei m JOIN titoli t ON t.id=m.titolo_id" + (" WHERE t.id=?" if solo else "")
+    tolti, rimessi = [], []
+    for t in c.execute(q, (solo,) if solo else ()).fetchall():
+        dentro = c.execute("SELECT 1 FROM lista_titoli WHERE lista_id=? AND titolo_id=?", (lid, t["id"])).fetchone()
+        f = finito(c, t, oggi, dv)
+        if f and dentro:
+            c.execute("DELETE FROM lista_titoli WHERE lista_id=? AND titolo_id=?", (lid, t["id"]))
+            c.execute("UPDATE miei SET tolto_auto=? WHERE titolo_id=?", (iso(oggi), t["id"]))
+            tolti.append(t["titolo"])
+        elif not f and not dentro and t["tolto_auto"]:
+            c.execute("INSERT OR IGNORE INTO lista_titoli VALUES (?,?,?)", (lid, t["id"], iso(oggi)))
+            c.execute("UPDATE miei SET tolto_auto=NULL WHERE titolo_id=?", (t["id"],))
+            rimessi.append(t["titolo"])
+    return tolti, rimessi
+
+
+CONSIGLI_PESO = {"mi_piace": 3.0, "visto": 2.0, "lista": 1.0, "nascosto": -1.5}
+CONSIGLI_VOTO_MIN, CONSIGLI_VOTI_MIN = 6.3, 50     # sotto, TMDB consiglia anche cose che nessuno ha visto
+CONSIGLI_CANDIDATI, CONSIGLI_TENUTI = 40, 24
+NASCOSTI_SEMI = 40         # i «non mi interessa» piu' recenti che insegnano (una chiamata TMDB l'uno)
+
+
+def peso_seme(c, s, oggi, dv):
+    """Quanto conta un mio titolo per i gusti: mi piace > visto > in lista."""
+    return CONSIGLI_PESO["mi_piace"] if s["mi_piace"] else \
+        CONSIGLI_PESO["visto"] if finito(c, s, oggi, dv) else CONSIGLI_PESO["lista"]
+
+
+def calcola_consigliati(c, api, oggi):
+    """Somma i «consigliati» di TMDB di ogni mio titolo, pesati: mi piace > visto >
+    in lista, e piu' in alto nella lista di TMDB = piu' punti. I «non mi
+    interessa» fanno da semi negativi: chi somiglia a loro perde punti. Scarta i
+    miei, i nascosti, quelli con pochi voti o voto basso, e quelli che non si
+    vedono su un servizio seguito; spinta del 25% a chi e' su un servizio a cui
+    sono abbonato. Il motivo mostrato e' il titolo che ha contribuito di piu'.
+    Tiene anche le somiglianze grezze (senza filtri sul voto) per «In arrivo».
+    Sostituisce l'intera tabella: ritorna quanti consigli ha tenuto."""
+    miei = {r[0] for r in c.execute("SELECT titolo_id FROM miei")}
+    via = {r[0] for r in c.execute("SELECT titolo_id FROM nascosti")}
+    dv = da_vedere(c, oggi)
+    punti, grezzi, motivi, dati = {}, {}, {}, {}
+    semi = [(s["tipo"], s["tmdb_id"], s["titolo"], peso_seme(c, s, oggi, dv))
+            for s in c.execute("SELECT t.*, m.mi_piace, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id").fetchall()]
+    for (tid,) in c.execute("SELECT titolo_id FROM nascosti ORDER BY quando DESC LIMIT ?", (NASCOSTI_SEMI,)).fetchall():
+        tipo, n = tid.split(":")
+        semi.append((tipo, int(n), None, CONSIGLI_PESO["nascosto"]))
+    for tipo_s, tmdb_s, nome_s, peso in semi:
+        for i, x in enumerate(api.consigliati(tipo_s, tmdb_s)[:20]):
+            tipo = x.get("media_type") or tipo_s
+            if tipo not in ("movie", "tv"):
+                continue
+            tid = f"{tipo}:{x['id']}"
+            if tid in miei or tid in via or x.get("adult"):
+                continue
+            p = peso * (1 - i / 25)
+            grezzi[tid] = grezzi.get(tid, 0) + p
+            if p > 0:
+                motivi.setdefault(tid, {}).setdefault(nome_s, 0)
+                motivi[tid][nome_s] += p
+            if (x.get("vote_count") or 0) < CONSIGLI_VOTI_MIN or (x.get("vote_average") or 0) < CONSIGLI_VOTO_MIN:
+                continue
+            punti[tid] = punti.get(tid, 0) + p
+            dati[tid] = (tipo, x)
+    c.execute("DELETE FROM somiglianze")
+    c.executemany("INSERT INTO somiglianze VALUES (?,?,?,?)",
+                  [(tid, round(p, 3), max(motivi[tid].items(), key=lambda y: y[1])[0] if tid in motivi else None, iso(oggi))
+                   for tid, p in grezzi.items() if c.execute("SELECT 1 FROM titoli WHERE id=?", (tid,)).fetchone()])
+    serv = {r["id"]: r for r in c.execute("SELECT * FROM servizi WHERE seguito=1")}
+    mappa = {r["id"]: r["servizio_id"] for r in c.execute("SELECT id, servizio_id FROM provider WHERE servizio_id IS NOT NULL")}
+    corretti = {}
+    for r in c.execute("SELECT titolo_id, servizio_id FROM correzioni"):
+        corretti.setdefault(r[0], set()).add(r[1])
+    tenuti = []
+    for tid in [t for t in sorted(punti, key=punti.get, reverse=True) if punti[t] > 0][:CONSIGLI_CANDIDATI]:
+        tipo, x = dati[tid]
+        it = api.provider_di(tipo, x["id"])
+        dove = sorted({mappa[p["provider_id"]] for o in ABBONAMENTO for p in it.get(o, [])
+                       if mappa.get(p["provider_id"]) in serv} - corretti.get(tid, set()))
+        if not dove:
+            continue
+        abbonato = any(serv[d]["stato"] == "attivo" for d in dove)
+        primo = max(motivi[tid].items(), key=lambda y: y[1])[0]
+        altri = len(motivi[tid]) - 1
+        motivo = f"per «{primo}»" + (f" e altri {altri}" if altri else "")
+        tenuti.append((tid, tipo, x, punti[tid] * (1.25 if abbonato else 1), motivo, dove))
+    tenuti.sort(key=lambda y: y[3], reverse=True)
+    c.execute("DELETE FROM consigliati")
+    for tid, tipo, x, p, motivo, dove in tenuti[:CONSIGLI_TENUTI]:
+        salva_base(c, tipo, x)
+        c.execute("INSERT INTO consigliati VALUES (?,?,?,?,?)", (tid, round(p, 3), motivo, ",".join(map(str, dove)), iso(oggi)))
+    return min(len(tenuti), CONSIGLI_TENUTI)
+
+
+# --- gusti ----------------------------------------------------------------------
+# Generi TMDB (film e serie) in italiano: stabili da anni, e una chiamata in
+# meno. Un id sconosciuto si mostra col numero, non si perde.
+GENERI = {28: "Azione", 12: "Avventura", 16: "Animazione", 35: "Commedia", 80: "Crime", 99: "Documentario",
+          18: "Dramma", 10751: "Famiglia", 14: "Fantasy", 36: "Storia", 27: "Horror", 10402: "Musica",
+          9648: "Mistero", 10749: "Romance", 878: "Fantascienza", 10770: "Film TV", 53: "Thriller",
+          10752: "Guerra", 37: "Western", 10759: "Action & Adventure", 10762: "Bambini", 10763: "News",
+          10764: "Reality", 10765: "Sci-Fi & Fantasy", 10766: "Soap", 10767: "Talk", 10768: "War & Politics"}
+GUSTI_PRUDENZA = 2.0       # un genere visto una volta sola non decide niente
+INTERESSE_SI, INTERESSE_NO = 0.35, -0.35
+
+
+def ids_generi(testo):
+    return [int(g) for g in (testo or "").split(",") if g.strip().isdigit()]
+
+
+def gusti(c, oggi, dv=None):
+    """{genere: da -1 a 1}: i miei titoli spingono in su col peso dei consigli,
+    i «non mi interessa» in giu'. Calcolata al volo: un 👍 o un 👎 conta subito."""
+    dv = da_vedere(c, oggi) if dv is None else dv
+    piu, meno = {}, {}
+    for s in c.execute("SELECT t.*, m.mi_piace, m.visto FROM miei m JOIN titoli t ON t.id=m.titolo_id").fetchall():
+        for g in ids_generi(s["generi_id"]):
+            piu[g] = piu.get(g, 0) + peso_seme(c, s, oggi, dv)
+    for r in c.execute("SELECT t.generi_id FROM nascosti n JOIN titoli t ON t.id=n.titolo_id"):
+        for g in ids_generi(r[0]):
+            meno[g] = meno.get(g, 0) - CONSIGLI_PESO["nascosto"]
+    return {g: (piu.get(g, 0) - meno.get(g, 0)) / (piu.get(g, 0) + meno.get(g, 0) + GUSTI_PRUDENZA)
+            for g in set(piu) | set(meno)}
+
+
+def interesse(c, righe, g):
+    """Per ogni titolo {id: (valore, motivo)}: la media dei gusti sui suoi generi
+    piu' la somiglianza ai miei secondo TMDB (la somiglianza massima vale 1).
+    Il motivo e' il titolo a cui somiglia di piu', altrimenti il genere preferito."""
+    mx = c.execute("SELECT MAX(ABS(punti)) FROM somiglianze").fetchone()[0] or 1
+    som = {r["titolo_id"]: r for r in c.execute("SELECT * FROM somiglianze")}
+    out = {}
+    for r in righe:
+        gg = [x for x in ids_generi(r["generi_id"]) if x in g]
+        v = sum(g[x] for x in gg) / len(gg) if gg else 0
+        k = som.get(r["id"])
+        motivo = None
+        if k:
+            v += k["punti"] / mx
+            if k["punti"] > 0 and k["motivo"]:
+                motivo = f"come «{k['motivo']}»"
+        if not motivo and gg:
+            top = max(gg, key=g.get)
+            if g[top] > 0:
+                motivo = f"ti piace: {GENERI.get(top, top)}"
+        out[r["id"]] = (round(v, 3), motivo)
+    return out
+
+
+def completa_generi(c, api, quanti=60):
+    """I titoli di cui servono i generi e non li abbiamo: i nascosti salvati prima
+    che i generi si tenessero. Una chiamata ciascuno, al massimo `quanti` a notte."""
+    righe = c.execute("""SELECT t.id, t.tipo, t.tmdb_id FROM titoli t JOIN nascosti n ON n.titolo_id=t.id
+                         WHERE t.generi_id IS NULL LIMIT ?""", (quanti,)).fetchall()
+    for r in righe:
+        d = api.get(f"/{r['tipo']}/{r['tmdb_id']}") or {}
+        ids = ",".join(str(x["id"]) for x in d.get("genres", []))
+        c.execute("UPDATE titoli SET generi_id=? WHERE id=?", (ids, r["id"]))    # '' = chiesto, nessun genere
+    return len(righe)
+
+
+def cronologia_a_rischio(s):
+    """Data da cui il servizio puo' cancellare la cronologia, se si puo' calcolare."""
+    if s["stato"] != "disdetto" or not s["fine"] or not s["conserva_mesi"]:
+        return None
+    return piu_mesi(data(s["fine"]), s["conserva_mesi"])
+
+
+def consigli(c, oggi, azioni=None):
+    """[dict] un verdetto per servizio seguito, con il motivo e i titoli che lo determinano.
+    Quando non c'e' niente di pronto comanda il piano: «aspetta» o «disdici» calcolati
+    qui guardano solo le uscite e potevano contraddire il piano (un «aspetta» contro
+    una pausa da chiedere prima). `azioni`: quelle del piano,
+    se gia' calcolate."""
+    if azioni is None:
+        azioni = piano_attuale(c, oggi)["azioni"]
+    dal_piano = {a["s"]["id"]: a for a in azioni}
+    dv = da_vedere(c, oggi)
+    per_serv = {}
+    for tid, x in dv.items():
+        x["dove"] = servizi_disponibili(c, tid)
+        for sid in x["dove"]:
+            per_serv.setdefault(sid, []).append(x)
+    out = []
+    for s in c.execute("SELECT * FROM servizi WHERE seguito=1 ORDER BY ordine, nome"):
+        voci = per_serv.get(s["id"], [])
+        pronti = [x for x in voci if x["pronte"]]
+        attese = sorted([(f, x) for x in voci for _, f in x["in_corso"] if f] +
+                        [(u, x) for x in voci for _, u in x["in_arrivo"]], key=lambda y: y[0])
+        pausa = in_pausa(s, oggi)
+        attivo = (s["stato"] == "attivo" and not pausa) or (s["stato"] == "disdetto" and s["fine"] and data(s["fine"]) >= oggi)
+        if pronti:
+            n = len(pronti)
+            verdetto = "sfrutta" if attivo else "attiva"
+            testo = (f"{n} titol{'o' if n == 1 else 'i'} da vedere" +
+                     (f", hai tempo fino al {gm(s['fine'])}" if s["stato"] == "disdetto" and attivo else ""))
+        elif attese:
+            prima = attese[0][0]
+            verdetto = "aspetta"
+            testo = f"Aspetta fino al {prima.strftime('%d/%m/%Y')}: {attese[0][1]['t']['titolo']}"
+        elif pausa:
+            verdetto = "niente"
+            testo = f"In pausa fino al {gm(s['pausa_fino'])}: poi riparte da solo"
+        elif attivo and s["stato"] == "attivo":
+            verdetto = "disdici"
+            testo = "Niente di nuovo nelle tue liste" + (f": puoi disdire prima del {gm(s['rinnovo'])}" if s["rinnovo"] else "")
+        else:
+            verdetto = "niente"
+            testo = "Niente di nuovo nelle tue liste"
+        a = dal_piano.get(s["id"])
+        if verdetto in ("aspetta", "disdici") and a and a["tipo"] in PIANO_VERDETTO:
+            verdetto, testo = PIANO_VERDETTO[a["tipo"]], a["testo"]
+        rischio = cronologia_a_rischio(s)
+        out.append(dict(s=s, verdetto=verdetto, testo=testo, pronti=pronti, attese=attese, attivo=attivo, dal_piano=testo == (a or {}).get("testo"),
+                        pausa=s["pausa_fino"] if pausa else None,
+                        rischio=rischio, rischio_vicino=bool(rischio and rischio - dt.timedelta(days=GIORNI_CRONOLOGIA) <= oggi)))
+    return out
+
+
+# --- abbonamenti --------------------------------------------------------------
+def scadenze(c, oggi):
+    """Avanza i rinnovi passati (un abbonamento attivo si rinnova da solo) e
+    registra gli eventi di rinnovo, fine e cronologia. Ritorna i testi nuovi."""
+    nuovi = []
+    for s in c.execute("SELECT * FROM servizi").fetchall():
+        if s["stato"] == "attivo" and s["pausa_fino"] and data(s["pausa_fino"]) <= oggi:
+            # la pausa e' finita: il servizio e' ripartito da solo e ha addebitato
+            c.execute("UPDATE servizi SET pausa_fino=NULL, pausa_dal=NULL, rinnovo=COALESCE(rinnovo, pausa_fino) WHERE id=?", (s["id"],))
+            t = f"{s['nome']}: finita la pausa, l'abbonamento è ripartito"
+            if evento(c, f"pausa-finita:{s['id']}:{s['pausa_fino']}", "rinnovo", t, oggi, servizio_id=s["id"]):
+                nuovi.append(t)
+            s = c.execute("SELECT * FROM servizi WHERE id=?", (s["id"],)).fetchone()
+        if s["stato"] == "attivo" and s["pausa_fino"]:
+            f = data(s["pausa_fino"])
+            if (f - oggi).days <= GIORNI_RINNOVO:
+                t = f"{s['nome']}: la pausa finisce il {f.strftime('%d/%m/%Y')} e riparte da solo. Se non ti serve, prolungala o disdici"
+                if evento(c, f"pausa:{s['id']}:{iso(f)}", "rinnovo", t, oggi, servizio_id=s["id"]):
+                    nuovi.append(t)
+            continue
+        if s["stato"] == "attivo" and s["rinnovo"]:
+            r = data(s["rinnovo"])
+            while r < oggi:
+                r = piu_mesi(r, 12 if s["ciclo"] == "anno" else 1)
+            if iso(r) != s["rinnovo"]:
+                c.execute("UPDATE servizi SET rinnovo=? WHERE id=?", (iso(r), s["id"]))
+            if (r - oggi).days <= GIORNI_RINNOVO:
+                prezzo = f" ({s['prezzo']:.2f} €)".replace(".", ",") if s["prezzo"] else ""
+                t = f"{s['nome']}: rinnovo il {r.strftime('%d/%m/%Y')}{prezzo}. Se non ti serve, disdici ora"
+                if evento(c, f"rinnovo:{s['id']}:{iso(r)}", "rinnovo", t, oggi, servizio_id=s["id"]):
+                    nuovi.append(t)
+        if s["stato"] == "disdetto" and s["fine"]:
+            f = data(s["fine"])
+            if 0 <= (f - oggi).days <= GIORNI_RINNOVO:
+                t = f"{s['nome']}: l'abbonamento finisce il {f.strftime('%d/%m/%Y')}"
+                if evento(c, f"fine:{s['id']}:{iso(f)}", "scadenza", t, oggi, servizio_id=s["id"]):
+                    nuovi.append(t)
+            rischio = cronologia_a_rischio(s)
+            if rischio and rischio - dt.timedelta(days=GIORNI_CRONOLOGIA) <= oggi:
+                t = (f"{s['nome']}: dal {rischio.strftime('%d/%m/%Y')} la cronologia e i preferiti possono essere "
+                     "cancellati. Riattiva almeno un mese prima di allora se vuoi conservarli")
+                if evento(c, f"cronologia:{s['id']}:{iso(rischio)}", "cronologia", t, oggi, servizio_id=s["id"]):
+                    nuovi.append(t)
+    return nuovi
+
+
+# --- piano di rotazione -------------------------------------------------------
+# Quale servizio attivare in quale mese, per vedere tutto pagando meno mesi.
+# Periodi di 30 giorni da oggi (un abbonamento mensile dura 30 giorni da quando
+# lo attivi, non un mese di calendario). Le ipotesi, dette anche nella pagina:
+# una stagione si guarda quando e' completa, tutta di seguito; si guardano al
+# massimo `ore_mese` ore al mese; un servizio gia' pagato si usa per primo.
+PAUSA_SCARTO = 21          # giorni: una pausa che fa ripartire piu' lontano di cosi' da quando serve non conviene
+PIANO_PERIODI = 6
+PIANO_GIORNI = 30
+ORE_MESE = 25              # predefinito: si cambia dalla pagina del piano (meta «ore_mese»)
+ATTESA_MAX = 3             # periodi: oltre, un titolo pronto non aspetta piu' compagnia
+ATTESA_UNIONE = 2          # periodi: si aspetta se entro cosi' arriva altro sullo stesso servizio
+MIN_EPISODIO = 45          # minuti di un episodio senza durata nota
+MIN_FILM = 110
+MESI_BREVI = ["gen", "feb", "mar", "apr", "mag", "giu", "lug", "ago", "set", "ott", "nov", "dic"]
+
+
+def breve(d):
+    """date(2026, 10, 3) -> '3 ott'"""
+    return f"{d.day} {MESI_BREVI[d.month - 1]}"
+
+
+def fine_stagione(c, tid, n):
+    """(data dell'ultimo episodio, stimata?) Stimata = una alla settimana dalla
+    prima uscita, quando TMDB non ha ancora tutte le date."""
+    s = c.execute("SELECT * FROM stagioni WHERE titolo_id=? AND numero=?", (tid, n)).fetchone()
+    if not s:
+        return None, True
+    # TMDB elenca solo gli episodi annunciati: una stagione di una rete TV che ne
+    # ha 4 su 20 sembrerebbe completa fra un mese. Se ne ha molti meno della
+    # precedente, la fine si stima sulla precedente.
+    prima = c.execute("SELECT episodi FROM stagioni WHERE titolo_id=? AND numero=?", (tid, n - 1)).fetchone()
+    t = c.execute("SELECT stato FROM titoli WHERE id=?", (tid,)).fetchone()
+    if prima and prima["episodi"] and s["uscita"] and t and t["stato"] not in STATI_FINE \
+            and (s["episodi"] or 0) < prima["episodi"] * .75:
+        return data(s["uscita"]) + dt.timedelta(days=7 * (prima["episodi"] - 1)), True
+    if s["fine"]:
+        return data(s["fine"]), False
+    date = [r[0] for r in c.execute("SELECT uscita FROM episodi WHERE titolo_id=? AND stagione=?", (tid, n))]
+    if date and all(date) and len(date) >= (s["episodi"] or 0):
+        return data(max(date)), False
+    if not s["uscita"]:
+        return None, True
+    return data(s["uscita"]) + dt.timedelta(days=7 * max((s["episodi"] or 8) - 1, 0)), True
+
+
+def minuti_episodio(c, t):
+    if t["durata"]:
+        return t["durata"]
+    r = c.execute("SELECT AVG(durata) FROM episodi WHERE titolo_id=? AND durata>0", (t["id"],)).fetchone()[0]
+    return round(r) if r else MIN_EPISODIO
+
+
+def ore_stagione(c, t, n, visti):
+    """Ore che restano da guardare di una stagione (episodi non visti)."""
+    std = minuti_episodio(c, t)
+    eps = c.execute("SELECT numero, durata FROM episodi WHERE titolo_id=? AND stagione=?", (t["id"], n)).fetchall()
+    s = c.execute("SELECT episodi FROM stagioni WHERE titolo_id=? AND numero=?", (t["id"], n)).fetchone()
+    attesi = max(len(eps), s["episodi"] or 0 if s else 0) or 8
+    prima = c.execute("SELECT episodi FROM stagioni WHERE titolo_id=? AND numero=?", (t["id"], n - 1)).fetchone()
+    if prima and prima["episodi"] and t["stato"] not in STATI_FINE and attesi < prima["episodi"] * .75:
+        attesi = prima["episodi"]                 # come in fine_stagione: annunciati solo i primi
+    noti = sum(e["durata"] or std for e in eps if e["numero"] not in visti)
+    return (noti + max(attesi - len(eps), 0) * std) / 60
+
+
+def lavori(c, oggi):
+    """Cosa c'e' da guardare, come pezzi da mettere nel piano: un film, le
+    stagioni pronte di una serie, ogni stagione in corso o annunciata (pronta
+    quando finisce). Ritorna (pianificabili, esclusi)."""
+    from db import episodi_visti
+    dv = da_vedere(c, oggi)
+    pezzi, esclusi = [], []
+    for tid, x in dv.items():
+        t = x["t"]
+        dove = servizi_disponibili(c, tid)
+        voci = []
+        if t["tipo"] == "movie":
+            voci.append(dict(cosa="Film", pronto=oggi, stimata=False, ore=(t["durata"] or MIN_FILM) / 60))
+        else:
+            visti = episodi_visti(c, tid, t)
+            if x["pronte"]:
+                p = x["pronte"]
+                cosa = f"Stagione {p[0]}" if len(p) == 1 else f"Stagioni {p[0]}–{p[-1]}" \
+                    if p == list(range(p[0], p[-1] + 1)) else "Stagioni " + ", ".join(map(str, p))
+                voci.append(dict(cosa=cosa, pronto=oggi, stimata=False,
+                                 ore=sum(ore_stagione(c, t, n, visti.get(n, set())) for n in p)))
+            for n, _ in x["in_corso"] + x["in_arrivo"]:
+                f, stimata = fine_stagione(c, tid, n)
+                voci.append(dict(cosa=f"Stagione {n}", pronto=f, stimata=stimata,
+                                 ore=ore_stagione(c, t, n, visti.get(n, set()))))
+        rimanda = t["rimanda"]
+        for v in voci:
+            v.update(t=t, dove=dove, ore=round(v["ore"], 1))
+            if rimanda == "gratis":
+                v["gratis"] = True                 # solo negli spazi dei mesi pagati comunque
+            elif rimanda and v["pronto"]:
+                v["pronto"] = max(v["pronto"], data(rimanda)); v["rimandato"] = data(rimanda)
+            if not dove:
+                v["perche"] = "su nessun servizio che segui"
+            elif not v["pronto"]:
+                v["perche"] = "data di uscita sconosciuta"
+            (esclusi if v.get("perche") else pezzi).append(v)
+    return pezzi, esclusi
+
+
+def prezzo_mese(s, medio):
+    """(euro per un periodo di 30 giorni, stimato?) Un annuale costa l'anno intero."""
+    if s["prezzo"]:
+        return s["prezzo"], False
+    return medio, True
+
+
+def ultimo_addebito(s, oggi):
+    """Il giorno dell'ultimo addebito gia' fatto, ricavato dal prossimo: un ciclo
+    prima del rinnovo (o del giorno dopo la fine, se disdetto). None se non si
+    ricava: in pausa il rinnovo e' la ripartenza, non un ciclo dopo l'addebito."""
+    if pausa_programmata(s, oggi):
+        base = data(s["pausa_dal"])
+    elif in_pausa(s, oggi):
+        return None
+    elif s["stato"] == "attivo" and s["rinnovo"]:
+        base = data(s["rinnovo"])
+    elif s["stato"] == "disdetto" and s["fine"]:
+        base = data(s["fine"]) + dt.timedelta(days=1)
+    else:
+        return None
+    d = piu_mesi(base, -12 if s["ciclo"] == "anno" else -1)
+    return d if d <= oggi else None
+
+
+def ancora_piano(c, oggi):
+    """Il giorno da cui partono i periodi, fissato la prima volta. Con periodi
+    contati da oggi le date scivolerebbero di un giorno ogni notte, e un
+    «attiva verso il 28/10» non arriverebbe mai: sul calendario non si puo'."""
+    from db import meta
+    a = meta(c, "piano_ancora")
+    if not a:
+        a = iso(oggi); meta(c, "piano_ancora", a); c.commit()
+    return data(a)
+
+
+def piano_attuale(c, oggi, senza=()):
+    """Il piano come lo mostra la pagina: ore del mese scelte e ancora fissata."""
+    from db import meta
+    return piano(c, oggi, int(meta(c, "ore_mese") or ORE_MESE), ancora=ancora_piano(c, oggi), senza=senza)
+
+
+# azione del piano -> verdetto di Abbonamenti e Casa, quando non c'e' niente di pronto
+PIANO_VERDETTO = {"pausa": "pausa", "disdici": "disdici", "proroga": "pausa", "tieni": "aspetta",
+                  "attiva": "aspetta", "riprendi": "aspetta"}
+
+
+def _aggiungi_gratis(out, resto, per, serv, pagato):
+    def coperto(sid, i):
+        return sid in pagato and pagato[sid] >= per[i][0] + dt.timedelta(days=PIANO_GIORNI // 2)
+    for q in out:
+        i, fin = q["i"], q["fine"]
+        cap = q["disponibili"] - q["ore"]
+        usabili = {x["s"]["id"]: x for x in q["voci"]}
+        for v in [v for v in resto if v.get("gratis") and v["pronto"] <= fin - dt.timedelta(days=7)]:
+            if cap < 1:
+                break
+            sid = next((s for s in v["dove"] if s in usabili), None) or next((s for s in v["dove"] if coperto(s, i)), None)
+            if sid is None:
+                continue
+            if sid not in usabili:
+                usabili[sid] = dict(s=serv[sid], azione="pagato", titoli=[], ore=0.0, costo=0.0, stimato=False)
+                q["voci"].append(usabili[sid])
+            x, ore = usabili[sid], min(v["ore"], round(cap, 1))
+            x["titoli"].append(dict(v, ore=ore, parte="" if ore >= v["ore"] else ("un'altra parte" if v.get("iniziato") else "una parte")))
+            x["ore"] += ore; q["ore"] = round(q["ore"] + ore, 1); cap -= ore
+            if ore >= v["ore"]:
+                resto.remove(v)
+            else:
+                v["ore"] = round(v["ore"] - ore, 1); v["iniziato"] = True
+
+
+def _ottimizza(out, per, serv, pagato, pagato_iniziale, medio, oggi):
+    """I periodi del piano rifatti sui mesi da pagare trovati da `risparmio.migliora`:
+    stesse ore degli stessi titoli, meno mesi pagati. Aggiorna `pagato` (annuali
+    comprati, mensili attivati adesso). Se non si risparmia, `out` resta com'e'."""
+    import risparmio
+    ml = risparmio.migliora(dict(per=per, servizi=serv, pagato_iniziale=pagato_iniziale, periodi=out, medio=medio, oggi=oggi))
+    if not ml:
+        return out
+    m, scelte, usato = ml
+    pagato.clear(); pagato.update(pagato_iniziale)
+    for sid, i in scelte:
+        if sid in m.annuale:
+            pagato[sid] = per[i][0] + dt.timedelta(days=364)
+        elif i == 0 and m.copre_dopo:
+            pagato[sid] = max(pagato.get(sid, oggi), oggi + dt.timedelta(days=PIANO_GIORNI - 1))
+    su = m.attivi(scelte)
+    pagate = set(scelte)
+    ordine = sorted(usato.items(), key=lambda y: (m.pezzi[y[0][0]]["pronto"], y[0][0]))
+    # 1) dove si guarda ogni pezzo: prima dove non si paga in quel periodo, poi il piu' economico
+    dove_va = {}
+    for (k, i), d in ordine:
+        dove = [sid for sid in m.pezzi[k]["dove"] if sid in su[i]]
+        dove_va[(k, i)] = min(dove, key=lambda x: ((x, i) in pagate, prezzo_mese(serv[x], medio)[0], serv[x]["ordine"] or 0))
+    usati = {(sid, i) for (_, i), sid in dove_va.items()}
+    # 2) un mese pagato che copre piu' periodi (attivato adesso, annuale) si paga nel primo
+    # in cui c'e' davvero qualcosa da guardare: altrimenti la voce spariva col suo costo
+    pagate = set()
+    for sid, i in scelte:
+        j = next((j for j in m.periodi_di(sid, i) if (sid, j) in usati), None)
+        if j is not None:                         # None: nessun titolo, il mese non serve
+            pagate.add((sid, j))
+    quante = collections.Counter(k for k, _ in usato)
+    viste = collections.Counter()
+    nuovo = []
+    for q in out:
+        i = q["i"]
+        voci = {}
+        for (k, j), d in ordine:
+            if j != i:
+                continue
+            z = m.pezzi[k]
+            sid = dove_va[(k, j)]
+            if sid not in voci:
+                s = serv[sid]
+                if (sid, i) not in pagate:
+                    azione, costo, stimato = "pagato", 0.0, False
+                else:
+                    costo, stimato = prezzo_mese(s, medio)
+                    if pausa_chiesta(s, oggi):
+                        azione = "riprendi" if per[i][0] < data(s["pausa_fino"]) else "rinnova"
+                    else:
+                        # rinnovo se era pagato il periodo prima (da noi o gia' da prima)
+                        azione = "rinnova" if (sid, i - 1) in pagate or (s["stato"] == "attivo" and (i == 0 or m.coperto(sid, i - 1))) else "attiva"
+                voci[sid] = dict(s=s, azione=azione, titoli=[], ore=0.0, costo=costo, stimato=stimato)
+            viste[k] += 1
+            parte = z["orig"].get("parte", "") if quante[k] == 1 else \
+                "una parte" if viste[k] == 1 else "il resto" if viste[k] == quante[k] else "un'altra parte"
+            voci[sid]["titoli"].append(dict(z["orig"], ore=round(d / 10, 1), parte=parte))
+            voci[sid]["ore"] += d / 10
+        vv = sorted(voci.values(), key=lambda x: (x["azione"] != "pagato", x["s"]["ordine"] or 0, x["s"]["nome"]))
+        nuovo.append(dict(q, voci=vv, rinvii=[], ore=round(sum(x["ore"] for x in vv), 1), costo=sum(x["costo"] for x in vv)))
+    return nuovo
+
+
+def piano(c, oggi, ore_mese=ORE_MESE, periodi=PIANO_PERIODI, ancora=None, ottimizza=True, senza=()):
+    """Il piano: per ogni periodo, quali servizi tenere o attivare e cosa guardarci.
+    Greedy e spiegabile, non ottimo: prima i servizi gia' pagati, poi chi deve
+    continuare, poi i nuovi dal piu' carico. Un servizio si attiva se ha
+    abbastanza da guardare, se un titolo aspetta da troppo, o se nei prossimi
+    periodi non arriva altro da unire; altrimenti si rimanda, col motivo."""
+    serv = {s["id"]: s for s in c.execute("SELECT * FROM servizi WHERE seguito=1 ORDER BY ordine, nome")}
+    noti = sorted(s["prezzo"] for s in serv.values() if s["prezzo"] and s["ciclo"] == "mese")
+    medio = noti[len(noti) // 2] if noti else 0.0
+    ancora = min(ancora or oggi, oggi)
+    primo = (oggi - ancora).days // PIANO_GIORNI
+    per = [(ancora + dt.timedelta(days=PIANO_GIORNI * (primo + i)), ancora + dt.timedelta(days=PIANO_GIORNI * (primo + i + 1) - 1))
+           for i in range(periodi)]
+    pagato = {}                                    # servizio -> ultimo giorno gia' pagato
+    for sid, s in serv.items():
+        if s["stato"] == "attivo" and in_pausa(s, oggi):
+            continue                               # in pausa: non si usa finche' non riparte o si riprende
+        if pausa_programmata(s, oggi):
+            pagato[sid] = data(s["pausa_dal"]) - dt.timedelta(days=1)   # si guarda fino al giorno prima della pausa
+        elif s["stato"] == "attivo":
+            pagato[sid] = data(s["rinnovo"]) - dt.timedelta(days=1) if s["rinnovo"] else per[0][1]
+        elif s["stato"] == "disdetto" and s["fine"] and data(s["fine"]) >= oggi:
+            pagato[sid] = data(s["fine"])
+    pagato_iniziale = dict(pagato)                 # per il confronto col minimo (risparmio.py)
+
+    def coperto(sid, i):
+        """Pagato per almeno meta' del periodo: si usa senza spendere."""
+        return sid in pagato and pagato[sid] >= per[i][0] + dt.timedelta(days=PIANO_GIORNI // 2)
+
+    def periodo_di(d):
+        return min(max((d - per[0][0]).days, 0) // PIANO_GIORNI, periodi - 1)
+
+    pezzi, esclusi = lavori(c, oggi)
+    pezzi = [v for v in pezzi if v["t"]["id"] not in senza]     # `senza`: per il costo di un titolo
+    resto = sorted(pezzi, key=lambda v: (v["pronto"], v["t"]["titolo"] or ""))
+    for v in resto:
+        v["dal"] = periodo_di(v["pronto"])
+    out, acceso_prima = [], set()
+    for i, (ini, fin) in enumerate(per):
+        # il primo periodo e' gia' in parte passato: restano meno ore
+        disponibili = ore_mese * ((fin - oggi).days + 1) / PIANO_GIORNI if i == 0 else ore_mese
+        cap = float(disponibili)
+        def gratis_fino_in_fondo(v):
+            """Su un servizio pagato da qui alla fine del piano (un annuale): si puo'
+            guardare in qualunque mese, quindi riempie i buchi invece di prendere il
+            posto di cio' che costa."""
+            return any(all(coperto(sid, j) for j in range(i, periodi)) for sid in v["dove"])
+
+        def pronti(sid, flessibili=False):
+            return [v for v in resto if sid in v["dove"] and v["pronto"] <= fin - dt.timedelta(days=7)
+                    and gratis_fino_in_fondo(v) == flessibili and not v.get("gratis")]
+        voci, rinvii = {}, []
+
+        def assegna(sid, azione, flessibili=False):
+            nonlocal cap
+            s = serv[sid]
+            if azione == "pagato":
+                costo, stimato = 0.0, False
+            else:
+                costo, stimato = prezzo_mese(s, medio)
+            x = voci.get(sid) or dict(s=s, azione=azione, titoli=[], ore=0.0, costo=costo, stimato=stimato)
+            for v in pronti(sid, flessibili):
+                if cap <= 0.5:
+                    break
+                if v["ore"] <= cap + 1:            # un'ora di tolleranza: un episodio in piu' non sposta il mese
+                    x["titoli"].append(dict(v, parte="il resto" if v.get("iniziato") else ""))
+                    x["ore"] += v["ore"]; cap -= v["ore"]; resto.remove(v)
+                elif cap >= 2:                     # troppo per un mese: se ne guarda una parte, il resto continua
+                    x["titoli"].append(dict(v, ore=round(cap, 1), parte="un'altra parte" if v.get("iniziato") else "una parte"))
+                    x["ore"] += cap; v["ore"] = round(v["ore"] - cap, 1); v["iniziato"] = True; cap = 0
+                else:
+                    break
+            if x["titoli"]:
+                voci[sid] = x
+                # pagato solo se la voce resta: prima un'attivazione senza titoli (il mese
+                # era pieno) non costava ma rendeva gratis il servizio nei mesi dopo
+                if azione != "pagato" and s["ciclo"] == "anno":
+                    pagato[sid] = ini + dt.timedelta(days=364)
+                elif i == 0 and azione in ("attiva", "riprendi"):
+                    # attivato adesso vale 30 giorni da oggi, non fino alla fine del periodo
+                    pagato[sid] = max(pagato.get(sid, oggi), oggi + dt.timedelta(days=PIANO_GIORNI - 1))
+            return x
+
+        # 1) cio' che e' gia' pagato, a costo zero (non gli annuali: vedi 3)
+        for sid in serv:
+            if coperto(sid, i):
+                assegna(sid, "pagato")
+        # 2) il resto, chi era acceso prima per primo, poi dal piu' carico
+        ore_su = {sid: sum(v["ore"] for v in pronti(sid)) for sid in serv if sid not in voci and not coperto(sid, i)}
+        for sid in sorted((s for s in ore_su if ore_su[s] > 0), key=lambda s: (s not in acceso_prima, -ore_su[s])):
+            mie = pronti(sid)
+            if not mie:
+                continue                            # presi da un servizio scelto prima in questo periodo
+            h = sum(v["ore"] for v in mie)
+            s = serv[sid]
+            if cap < min(h, disponibili / 2):
+                rinvii.append(dict(s=s, motivo="prima finisci quello che hai già in questo periodo"))
+                continue
+            limite = per[min(i + ATTESA_UNIONE, periodi - 1)][1] - dt.timedelta(days=7)
+            unire = [v for v in resto if sid in v["dove"] and v not in mie and v["pronto"] <= limite and not v.get("gratis")
+                     and not any(coperto(o, periodo_di(v["pronto"])) for o in v["dove"])]
+            continua = sid in acceso_prima
+            aspettato = max(i - v["dal"] for v in mie) >= ATTESA_MAX
+            if continua or aspettato or h >= disponibili * .8 or not unire or i == periodi - 1:
+                if pausa_chiesta(s, oggi):
+                    assegna(sid, "riprendi" if ini < data(s["pausa_fino"]) else "rinnova")
+                else:
+                    gia = continua or (s["stato"] == "attivo" and i == 0)
+                    assegna(sid, "rinnova" if gia else "attiva")
+            else:
+                u = unire[0]
+                rinvii.append(dict(s=s, motivo=f"aspetta: verso il {breve(u['pronto'])} è pronto anche «{u['t']['titolo']}» ({u['cosa'].lower()})"))
+        # 3) cio' che e' gratis fino alla fine del piano, nelle ore che restano
+        for sid in serv:
+            if coperto(sid, i):
+                assegna(sid, "pagato", flessibili=True)
+        # chi e' acceso e non ha finito continua nel periodo dopo, prima dei nuovi
+        acceso_prima = {sid for sid, x in voci.items() if x["titoli"] and
+                        (x["azione"] != "pagato" or (i + 1 < periodi and not coperto(sid, i + 1)))}
+        out.append(dict(i=i, inizio=ini, fine=fin, voci=list(voci.values()), rinvii=rinvii,
+                        ore=round(disponibili - cap, 1), disponibili=round(disponibili, 1), costo=sum(x["costo"] for x in voci.values())))
+
+    # 4) piu' economico, a parita' di cio' che si guarda: il greedy decide cosa
+    # vedere, la ricerca locale quali mesi pagare
+    if ottimizza:
+        for _ in range(5):                         # ogni ricostruzione puo' aprire altri risparmi
+            prima = sum(q["costo"] for q in out)
+            out = _ottimizza(out, per, serv, pagato, pagato_iniziale, medio, oggi)
+            if sum(q["costo"] for q in out) >= prima - 0.005:
+                break
+    # 5) i titoli rimandati «solo se gratis»: nelle ore che restano dei mesi che si
+    # pagano comunque (o gia' pagati), mai un mese in piu' per loro
+    _aggiungi_gratis(out, resto, per, serv, pagato)
+
+    # cosa fare adesso, servizio per servizio
+    azioni = []
+    for sid, s in serv.items():
+        usi = [p["i"] for p in out for x in p["voci"] if x["s"]["id"] == sid and x["titoli"]]
+        pagati = [p["i"] for p in out for x in p["voci"] if x["s"]["id"] == sid and x["azione"] != "pagato"]
+        if pausa_chiesta(s, oggi):
+            pf = data(s["pausa_fino"])
+
+            def serve_dal(i):
+                """Il giorno in cui serve nel periodo i: quando il primo titolo e' pronto."""
+                pronti_i = [y["pronto"] for x in out[i]["voci"] if x["s"]["id"] == sid for y in x["titoli"]]
+                return max([per[i][0]] + ([min(pronti_i)] if pronti_i else []))
+            # riprendere (o annullare) solo se la pausa finisce troppo dopo quando
+            # serve: se riparte da sola entro PAUSA_SCARTO giorni, si aspetta lei
+            prima = [i for i in pagati if per[i][0] < pf and (pf - serve_dal(i)).days > PAUSA_SCARTO]
+            subito = [i for i in pagati if per[i][1] >= pf and i <= periodo_di(pf) + 1]
+            dopo = [i for i in pagati if per[i][1] >= pf]
+            n = s["pausa_proroghe"]            # None = non si sa (i servizi lo propongono a ridosso, e cambiano)
+            if prima and pausa_programmata(s, oggi):
+                pd = data(s["pausa_dal"])
+                azioni.append(dict(s=s, tipo="riprendi", quando=pd - dt.timedelta(days=1), pausa=pf, programmata=True,
+                                   testo=f"Annulla la pausa prima del {breve(pd)}: ti serve dal {breve(max(per[prima[0]][0], pd))}"))
+            elif prima:
+                q = max(per[prima[0]][0], oggi)
+                azioni.append(dict(s=s, tipo="riprendi", quando=q, pausa=pf,
+                                   testo="Riprendilo dalla pausa adesso" if q == oggi else f"Riprendilo dalla pausa verso il {breve(q)}"))
+            elif pausa_programmata(s, oggi):
+                azioni.append(dict(s=s, tipo="pagato", quando=data(s["pausa_dal"]) - dt.timedelta(days=1), pausa=pf,
+                                   testo=f"Si guarda fino al {breve(data(s['pausa_dal']) - dt.timedelta(days=1))}, "
+                                         f"poi in pausa fino al {breve(pf)}"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            elif subito:
+                azioni.append(dict(s=s, tipo="tieni", quando=pf, pausa=pf, testo=f"In pausa fino al {breve(pf)}: poi riparte, e ti serve"))
+            elif n:
+                azioni.append(dict(s=s, tipo="proroga", quando=pf, pausa=pf,
+                                   testo=f"La pausa finisce il {breve(pf)}: prolungala (ne rest{'a' if n == 1 else 'ano'} {n})"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            elif n is None:
+                azioni.append(dict(s=s, tipo="disdici", quando=pf, pausa=pf, forse=True,
+                                   testo=f"La pausa finisce il {breve(pf)}: prolungala se te lo propone, altrimenti disdici prima che riparta"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            else:
+                azioni.append(dict(s=s, tipo="disdici", quando=pf, pausa=pf,
+                                   testo=f"La pausa finisce il {breve(pf)}: disdici prima, o riparte e addebita"
+                                         + (f"; ti servirà verso il {breve(per[dopo[0]][0])}" if dopo else "")))
+            continue
+        if s["stato"] == "attivo" and s["ciclo"] == "mese":
+            r = data(s["rinnovo"]) if s["rinnovo"] else None
+            k = next((i for i in range(periodi) if not coperto(sid, i)), None)
+            if k is not None and k in pagati:
+                azioni.append(dict(s=s, tipo="tieni", quando=r, testo="Tienilo" + (f": al rinnovo del {breve(r)} ti serve ancora" if r else "")))
+            else:
+                dopo = next((i for i in pagati if k is not None and i > k), None)
+                # Il servizio concede la pausa: si mette in pausa invece di disdire,
+                # anche se dopo non c'e' niente: l'iscrizione resta, con cronologia
+                # e preferenze. La
+                # disdetta viene solo alla fine della pausa, se ancora non serve: lo
+                # dice il ramo delle pause qui sopra, quando la pausa e' in corso.
+                # Come la disdetta comincia al rinnovo: i giorni pagati si guardano.
+                # Se serve di nuovo, la durata e' quella che fa ripartire piu' vicino
+                # al giorno in cui il primo titolo e' pronto, entro PAUSA_SCARTO (a
+                # parita' la piu' lunga: si paga dopo); oltre, la pausa piu' lunga.
+                durata, per_quando = None, False
+                if r and durate_pausa(s):
+                    durate = durate_pausa(s)
+                    if dopo is not None:
+                        pronti_dopo = [y["pronto"] for x in out[dopo]["voci"] if x["s"]["id"] == sid for y in x["titoli"]]
+                        serve = (max([per[dopo][0]] + ([min(pronti_dopo)] if pronti_dopo else [])) - r).days
+                        vicine = sorted(durate, key=lambda d: (abs(d - serve), -d))
+                        if serve > 0 and abs(vicine[0] - serve) <= PAUSA_SCARTO:
+                            durata, per_quando = vicine[0], True
+                        elif serve > durate[-1]:
+                            durata = durate[-1]
+                    else:
+                        durata = durate[-1]
+                if durata:
+                    fino, passo = r + dt.timedelta(days=durata), passo_pausa(s)
+                    if passo:
+                        volte = durata // passo[0] - 1
+                        quanto = ("un mese" if passo[0] == 30 else f"{passo[0]} giorni") + \
+                            (f", poi prorogala {volte} volt{'a' if volte == 1 else 'e'} quando te lo propone" if volte else "")
+                    else:
+                        quanto = f"per {durata} giorni"
+                    seguito = f"riparte il {breve(fino)}, quando ti serve di nuovo" if per_quando else \
+                        f"alla fine ({breve(fino)}), se non ti serve ancora, disdici prima che riparta"
+                    azioni.append(dict(s=s, tipo="pausa", quando=r, fino=fino, quanto=quanto,
+                                       primo=r + dt.timedelta(days=passo[0]) if passo else fino,
+                                       proroghe=passo[1] - 1 if passo else None,
+                                       testo=f"Mettilo in pausa prima del {breve(r)}: {quanto}; {seguito}. Fino ad allora si guarda"))
+                    continue
+                testo = (f"Disdici prima del {breve(r)}" if r else "Disdici") + ": fino ad allora resta attivo"
+                if dopo is not None:
+                    testo += f"; riattivalo verso il {breve(per[dopo][0])}"
+                azioni.append(dict(s=s, tipo="disdici", quando=r or oggi, testo=testo))
+        elif s["stato"] == "disdetto" and sid in pagato and not pagati:
+            testo = f"Già disdetto, attivo fino al {breve(pagato[sid])}"
+            azioni.append(dict(s=s, tipo="pagato", quando=pagato[sid],
+                               testo=testo + (": usalo per quello che il piano gli assegna" if usi else "")))
+        elif s["stato"] == "attivo":
+            azioni.append(dict(s=s, tipo="pagato", quando=pagato.get(sid), testo=f"Annuale, pagato fino al {breve(data(s['rinnovo']))}" if s["rinnovo"] else "Annuale"))
+        elif pagati:
+            j = pagati[0]
+            azioni.append(dict(s=s, tipo="attiva", quando=per[j][0],
+                               testo="Attivalo adesso" if j == 0 else f"Attivalo verso il {breve(per[j][0])}"))
+        elif not usi:
+            azioni.append(dict(s=s, tipo="niente", quando=None, testo="Non ti serve nei prossimi sei mesi"))
+    ordine = {"disdici": 0, "proroga": 0, "pausa": 0, "riprendi": 1, "attiva": 1, "tieni": 2, "pagato": 3, "niente": 4}
+    azioni.sort(key=lambda a: (ordine[a["tipo"]], a["quando"] or dt.date.max))
+
+    # gia' speso: un addebito fatto dentro un periodo si mostra, ma per il piano e'
+    # un costo passato: resta fuori da `spesa` e dal confronto col minimo
+    for q in out:
+        q["speso"] = []
+        for s in serv.values():
+            d = ultimo_addebito(s, oggi)
+            if d and q["inizio"] <= d <= q["fine"] and s["prezzo"]:
+                q["speso"].append(dict(s=s, quando=d, costo=s["prezzo"]))
+        q["costo_speso"] = round(sum(x["costo"] for x in q["speso"]), 2)
+
+    oltre = list(resto)
+    spesa = round(sum(p["costo"] for p in out), 2)
+    # confronto: tenere attivi, per tutti i periodi, i mensili attivi oggi
+    oggi_attivi = round(sum((s["prezzo"] or medio) * periodi for s in serv.values()
+                            if s["stato"] == "attivo" and s["ciclo"] == "mese" and not in_pausa(s, oggi)), 2)
+    tutti = round(sum((s["prezzo"] or medio) * (periodi if s["ciclo"] == "mese" else 0) for s in serv.values()), 2)
+    return dict(periodi=out, azioni=azioni, oltre=oltre, esclusi=esclusi, spesa=spesa, oggi_attivi=oggi_attivi,
+                per=per, pagato_iniziale=pagato_iniziale, servizi=serv, oggi=oggi,
+                tutti=tutti, stimati=[s["nome"] for s in serv.values() if not s["prezzo"]], medio=medio, ore_mese=ore_mese)
+
+
+def promemoria(c, oggi, p):
+    """Gli eventi del calendario dal piano, con UID stabili: lo stesso promemoria
+    si sposta invece di duplicarsi quando il piano cambia.
+    - servizio mensile attivo: «Disdici» il giorno prima del rinnovo in cui non
+      serve piu' (dopo i periodi a pagamento che il piano gli assegna ancora);
+    - servizio non attivo: per ogni tratto di periodi consecutivi, «Attiva» al
+      primo giorno e «Disdici» due giorni prima dei 30 giorni pagati.
+    Quando l'utente segna l'attivazione in Abbonamenti, il servizio diventa
+    attivo e i due eventi del tratto lasciano il posto al «Disdici» del rinnovo."""
+    serv = {s["id"]: s for s in c.execute("SELECT * FROM servizi WHERE seguito=1")}
+    pagati = {}
+    for q in p["periodi"]:
+        for x in q["voci"]:
+            if x["azione"] != "pagato":
+                pagati.setdefault(x["s"]["id"], {})[q["i"]] = (q, x)
+    ev = []
+
+    def titoli(voci):
+        t = []
+        for q, x in voci:
+            for y in x["titoli"]:
+                if y["t"]["titolo"] not in t:
+                    t.append(y["t"]["titolo"])
+        return t
+
+    azioni = {a["s"]["id"]: a for a in p["azioni"]}
+    for sid, s in serv.items():
+        mie = pagati.get(sid, {})
+        if pausa_chiesta(s, oggi):
+            a, pf = azioni[sid], data(s["pausa_fino"])
+            if a["tipo"] == "riprendi" and a.get("programmata"):
+                ev.append(dict(uid=f"riprendi-{sid}", giorno=max(a["quando"], oggi), avviso=2, titolo=f"Annulla la pausa di {s['nome']}",
+                               testo=f"La pausa comincia il {data(s['pausa_dal']).strftime('%d/%m/%Y')}, ma ti serve: "
+                                     f"{', '.join(titoli(mie.values()))}. Annullala, poi segnalo in Palinsesto."))
+            elif a["tipo"] == "riprendi":
+                ev.append(dict(uid=f"riprendi-{sid}", giorno=a["quando"], avviso=0, titolo=f"Riprendi {s['nome']} dalla pausa",
+                               testo=f"Da guardare: {', '.join(titoli(mie.values()))}. Poi segnalo in Palinsesto: «L'ho ripreso oggi»."))
+            elif a["tipo"] == "proroga":
+                ev.append(dict(uid=f"pausa-{sid}", giorno=max(pf - dt.timedelta(days=1), oggi), avviso=2,
+                               titolo=f"{s['nome']}: prolunga la pausa",
+                               testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')} e poi riparte e addebita. Prolungala "
+                                     f"(proroghe rimaste: {s['pausa_proroghe']}) o disdici, poi segnalo in Palinsesto."))
+            elif a["tipo"] == "disdici":
+                forse = a.get("forse")
+                ev.append(dict(uid=f"disdici-{sid}", giorno=max(pf - dt.timedelta(days=1), oggi), avviso=2,
+                               titolo=f"{s['nome']}: prolunga la pausa o disdici" if forse else f"Disdici {s['nome']}",
+                               testo=f"La pausa finisce il {pf.strftime('%d/%m/%Y')}: se non fai niente, riparte e addebita. "
+                                     + ("Se il servizio ti propone di prolungarla, prolungala; altrimenti disdici. " if forse else "")
+                                     + "Poi segnalo in Palinsesto."))
+            else:
+                ev.append(dict(uid=f"riparte-{sid}", giorno=pf, avviso=0, titolo=f"{s['nome']} riparte dalla pausa",
+                               testo=f"Finisce la pausa e riparte l'abbonamento: ti serve per {', '.join(titoli(mie.values()))}."))
+            continue
+        if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"] and azioni.get(sid, {}).get("tipo") == "pausa":
+            a, r = azioni[sid], data(s["rinnovo"])
+            ev.append(dict(uid=f"pausa-{sid}", giorno=max(r - dt.timedelta(days=1), oggi), avviso=2,
+                           titolo=f"Metti in pausa {s['nome']}",
+                           testo=f"Prima del rinnovo del {r.strftime('%d/%m/%Y')} mettilo in pausa: {a['quanto']} "
+                                 f"(la pausa comincia dal rinnovo: fino ad allora si guarda). Poi segnalo in Palinsesto: «L'ho messo in pausa»."))
+            continue
+        if s["stato"] == "attivo" and s["ciclo"] == "mese" and s["rinnovo"]:
+            r = data(s["rinnovo"])
+            # periodi pagati consecutivi subito dopo la copertura di oggi: tanti rinnovi quanti servono
+            k = next((i for i in range(len(p["periodi"])) if i not in mie and p["periodi"][i]["inizio"] >= r), None)
+            n = len([i for i in mie if k is None or i < k])
+            fine = r + dt.timedelta(days=PIANO_GIORNI * n)
+            ev.append(dict(uid=f"disdici-{sid}", giorno=max(fine - dt.timedelta(days=1), oggi), avviso=2,
+                           titolo=f"Disdici {s['nome']}",
+                           testo=f"Il rinnovo del {fine.strftime('%d/%m/%Y')} non ti serve: disdici prima, resti abbonato fino ad allora."
+                                 + (f"\nDa finire prima: {', '.join(titoli(mie.values()))}." if mie else "")))
+            continue
+        if s["stato"] == "attivo":
+            continue                                   # annuale: niente da ricordare nei sei mesi
+        tratti = []
+        for i in sorted(mie):
+            if tratti and tratti[-1][-1] == i - 1:
+                tratti[-1].append(i)
+            else:
+                tratti.append([i])
+        for n, t in enumerate(tratti):
+            voci = [mie[i] for i in t]
+            inizio = max(voci[0][0]["inizio"], oggi)
+            fine = inizio + dt.timedelta(days=PIANO_GIORNI * len(t))
+            costo = sum(x["costo"] for _, x in voci)
+            ev.append(dict(uid=f"attiva-{sid}-{n}", giorno=inizio, avviso=0, titolo=f"Attiva {s['nome']}",
+                           testo=f"Da guardare: {', '.join(titoli(voci))}.\n{len(t)} mes{'e' if len(t) == 1 else 'i'}, "
+                                 f"{costo:.2f} euro. Segna l'attivazione in Palinsesto, Abbonamenti, con la data del rinnovo."))
+            ev.append(dict(uid=f"disdici-{sid}-{n}", giorno=fine - dt.timedelta(days=2), avviso=2,
+                           titolo=f"Disdici {s['nome']}",
+                           testo=f"Se l'hai attivato il {inizio.strftime('%d/%m/%Y')}, si rinnova il {fine.strftime('%d/%m/%Y')}: "
+                                 "disdici prima. La data esatta e' quella che segni in Abbonamenti."))
+    return ev

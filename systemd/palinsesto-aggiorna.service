@@ -1,0 +1,16 @@
+[Unit]
+Description=Palinsesto: giro notturno (schede, disponibilita', novita', avvisi)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=palinsesto
+ExecStart=/usr/bin/python3 /home/palinsesto/palinsesto/aggiorna.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/palinsesto/.local/share/palinsesto /home/palinsesto/.config/palinsesto
+TimeoutStartSec=30min
+# 75 = rete giu' (aggiorna.py RETE_GIU): lo dice la riga «giro FALLITO», non un'unita' fallita
+SuccessExitStatus=75

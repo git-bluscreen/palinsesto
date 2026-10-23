@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}Piano · Palinsesto{% endblock %}
+{% set AZIONI = {'disdici': ('Da disdire', 'v-disdici'), 'attiva': ('Da attivare', 'v-attiva'), 'tieni': ('Tienilo', 'v-sfrutta'),
+                 'proroga': ('Prolunga la pausa', 'v-aspetta'), 'pausa': ('Da mettere in pausa', 'v-aspetta'), 'riprendi': ('Da riprendere', 'v-attiva'),
+                 'pagato': ('Già pagato', 'abbonato'), 'niente': ('Non serve', '')} %}
+{% set VOCI = {'pagato': ('già pagato', 'abbonato'), 'attiva': ('da attivare', 'v-attiva'), 'rinnova': ('da rinnovare', 'v-aspetta'),
+               'riprendi': ('da riprendere dalla pausa', 'v-attiva')} %}
+{% block corpo %}
+<h1 class="pagina-titolo">Piano dei prossimi mesi</h1>
+{% set torna = '/piano' %}{% include "_piano_cambiato.html" %}
+<p class="riepilogo">In sei mesi spendi <b>{{ p.spesa|euro }}</b> col piano{% if p.oggi_attivi > p.spesa %}, invece di {{ p.oggi_attivi|euro }} tenendo gli abbonamenti mensili di oggi: risparmi <b>{{ (p.oggi_attivi - p.spesa)|euro }}</b>{% endif %}.</p>
+<p class="rimando riquadro"><a href="{{ url_for('piano_risparmio') }}"><b>Si può spendere meno? ›</b><small>Il piano confrontato con la combinazione più economica degli stessi servizi.</small></a></p>
+{% if p.stimati %}<p class="nota">Prezzo mancante per {{ p.stimati|join(', ') }}: conto {{ p.medio|euro }} al mese, il prezzo tipico degli altri. Inseriscilo in <a href="{{ url_for('abbonamenti') }}">Abbonamenti</a>.</p>{% endif %}
+
+<form method="post" class="riga-form ore-mese">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="ore">Ore che guardi in un mese</label>
+  <input id="ore" name="ore" type="number" min="1" max="200" value="{{ p.ore_mese }}" inputmode="numeric">
+  <button class="tenue">Ricalcola</button>
+</form>
+
+{% if cal_configurato %}
+<form method="post" class="calendario-stato nota">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="calendario">
+  {% if cal and cal.ok %}📅 Sul calendario «Abbonamenti» di Nextcloud: {{ cal.eventi }} promemoria, aggiornati il {{ cal.quando[:16].replace('T', ' alle ') }}.{% if cal.annullati %} {{ cal.annullati }} vecch{{ 'io' if cal.annullati == 1 else 'i' }} rest{{ 'a' if cal.annullati == 1 else 'ano' }} come «Annullato», senza avviso: Nextcloud non {{ 'lo' if cal.annullati == 1 else 'li' }} cancella finché c'è una copia con lo stesso nome nel cestino del Calendario.{% endif %}
+  {% elif cal %}<span class="allarme">📅 Calendario non aggiornato: {{ cal.errore }} ({{ cal.quando[:16].replace('T', ' ') }}).</span>
+  {% else %}📅 Calendario non ancora scritto.{% endif %}
+  <button class="collegamento">Aggiorna adesso</button>
+</form>
+{% endif %}
+
+<section>
+  <h2 class="sezione-titolo">Cosa fare adesso</h2>
+  <ul class="elenco-righe azioni-piano">
+  {% for a in p.azioni %}
+    <li><a href="{{ url_for('servizio', sid=a.s.id) }}">
+      {{ mm.logo_servizio(a.s) }}
+      <span><b>{{ a.s.nome }}</b> <span class="etichetta {{ AZIONI[a.tipo][1] }}">{{ AZIONI[a.tipo][0] }}</span>
+        <small>{{ a.testo }}</small></span>
+    </a>
+    {% if a.tipo in ('disdici', 'attiva', 'proroga', 'riprendi', 'pausa') %}
+    <div class="fatto">
+    <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="in-riga">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="/piano">
+      {% if a.tipo in ('disdici', 'proroga', 'pausa') %}<button class="interruttore piccolo" name="azione" value="disdetto">L'ho disdetto</button>
+      {% elif a.tipo == 'riprendi' %}<button class="interruttore piccolo" name="azione" value="ripreso">{{ "Ho annullato la pausa" if a.programmata else "L'ho ripreso oggi" }}</button>
+      {% else %}<button class="interruttore piccolo" name="azione" value="attivato">L'ho attivato oggi</button>{% endif %}
+    </form>
+    {% set prolunga = a.tipo == 'proroga' or a.forse %}
+    {% if (a.tipo == 'disdici' and not a.pausa) or prolunga or a.tipo == 'pausa' %}
+    <details class="pausa">
+      <summary class="interruttore piccolo">{{ "Ho prolungato la pausa" if prolunga else "L'ho messo in pausa" }}</summary>
+      <form method="post" action="{{ url_for('abbonamento_fatto', sid=a.s.id) }}" class="modulo-pausa">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="torna" value="/piano">
+        <label>In pausa fino al<input type="date" name="fino" required value="{{ a.primo.isoformat() if a.primo else tre_mesi(a.pausa or a.s.rinnovo or o) }}"></label>
+        {% if not prolunga %}<label>Proroghe possibili dopo questa<input type="number" name="proroghe" min="0" max="9" value="{{ a.proroghe if a.proroghe is not none else (a.s.pausa_proroghe if a.s.pausa_proroghe is not none else '') }}" placeholder="vuoto = non lo so"></label>{% endif %}
+        <button class="primario" name="azione" value="{{ 'prolungata' if prolunga else 'pausa' }}">Salva</button>
+      </form>
+    </details>
+    {% endif %}
+    </div>
+    {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</section>
+
+<section>
+  <h2 class="sezione-titolo">Mese per mese</h2>
+  <div class="periodi">
+  {% for x in p.periodi %}
+    <article class="periodo riquadro">
+      <header class="periodo-testa">
+        <b>{{ breve(x.inizio) }} – {{ breve(x.fine) }}</b>
+        <span>{% if x.costo and x.costo_speso %}{{ x.costo|euro }} + {{ x.costo_speso|euro }} già spesi{% elif x.costo_speso %}{{ x.costo_speso|euro }} già spesi{% else %}{{ x.costo|euro if x.costo else 'nessuna spesa' }}{% endif %}</span>
+      </header>
+      {% for v in x.voci %}
+      <div class="periodo-servizio">
+        <p>{{ mm.logo_servizio(v.s) }}<b>{{ v.s.nome }}</b> <span class="etichetta {{ VOCI[v.azione][1] }}">{{ VOCI[v.azione][0] }}</span>{% if v.costo %} <small class="prezzo">{{ v.costo|euro }}{% if v.stimato %} (stimato){% endif %}</small>{% endif %}</p>
+        <ul class="piccola-lista">
+        {% for y in v.titoli %}
+          <li><a href="{{ link(y.t.id) }}">{{ y.t.titolo }}</a> <small>{% if y.gratis %}rimandato, qui gratis · {% endif %}{{ y.cosa }}{% if y.t.tipo == 'tv' and y.pronto > o %}, completa dal {{ breve(y.pronto) }}{% if y.stimata %} (stima){% endif %}{% endif %} · {{ y.ore|ore }}{% if y.parte %} · {{ y.parte }}{% endif %}</small></li>
+        {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <p class="vuoto">Niente in programma.</p>
+      {% endfor %}
+      {% if x.speso %}<p class="nota">Già speso: {% for y in x.speso %}{{ y.s.nome }} {{ y.costo|euro }} il {{ breve(y.quando) }}{{ ', ' if not loop.last }}{% endfor %}.</p>{% endif %}
+      {% for r in x.rinvii %}<p class="nota">{{ r.s.nome }}: {{ r.motivo }}.</p>{% endfor %}
+      <p class="nota">Tempo occupato: {{ x.ore|ore }} su {{ x.disponibili|ore }}{% if loop.first and x.disponibili < p.ore_mese %} (il periodo è già iniziato){% endif %}.</p>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+
+{% if p.oltre %}
+<section>
+  <h2 class="sezione-titolo">Più avanti</h2>
+  <ul class="piccola-lista">{% for v in p.oltre %}<li><a href="{{ link(v.t.id) }}">{{ v.t.titolo }}</a> <small>{{ v.cosa }} · pronta dal {{ v.pronto|gm }}{% if v.stimata %} (stima){% endif %}</small></li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if rimandati %}
+<section id="rimandati">
+  <h2 class="sezione-titolo">Rimandati</h2>
+  <ul class="piccola-lista">{% for t in rimandati %}
+    <li><a href="{{ link(t.id) }}">{{ t.titolo }}</a> <small>{{ 'solo se gratis, nei mesi già pagati' if t.rimanda == 'gratis' else 'non prima del ' ~ (t.rimanda|gm) }}</small>
+      <form method="post" action="{{ url_for('rimanda') }}" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ t.id }}"><input type="hidden" name="modo" value="no"><input type="hidden" name="torna" value="/piano#rimandati">
+        <button class="collegamento">rimettilo nel piano</button></form></li>
+  {% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if p.esclusi %}
+<section>
+  <details class="riquadro">
+    <summary>Fuori dal piano · {{ p.esclusi|length }}</summary>
+    <ul class="piccola-lista">{% for v in p.esclusi %}<li><a href="{{ link(v.t.id) }}">{{ v.t.titolo }}</a> <small>{{ v.cosa }} · {{ v.perche }}</small></li>{% endfor %}</ul>
+  </details>
+</section>
+{% endif %}
+
+<p class="nota">Come ragiona il piano: periodi di 30 giorni, come un abbonamento mensile, contati sempre dallo stesso giorno perché le date non scivolino. Una stagione entra nel piano quando è completa, e si guarda tutta di seguito. Si usa prima quello che hai già pagato, poi si attiva un servizio quando c'è abbastanza da guardarci, quando un titolo aspetta da tre mesi, o quando non arriva altro da unire. Disdire subito dopo aver attivato di solito lascia il servizio attivo fino alla fine del mese pagato. Le date di fine segnate «stima» contano un episodio a settimana. <a href="{{ url_for('come_funziona') }}#piano">Tutti i dettagli ›</a></p>
+{% endblock %}

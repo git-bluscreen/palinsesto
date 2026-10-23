@@ -1,0 +1,16 @@
+[Unit]
+Description=Palinsesto: copia coerente del database prima del backup PBS delle 01:00
+
+[Service]
+Type=oneshot
+User=palinsesto
+Group=palinsesto
+# .backup di sqlite e' coerente anche con la pagina accesa; si scrive su un file
+# nuovo e si rinomina solo a copia riuscita e verificata.
+ExecStart=/usr/bin/sqlite3 /home/palinsesto/.local/share/palinsesto/palinsesto.db ".backup /home/palinsesto/.local/share/palinsesto/backup/palinsesto.db.nuovo"
+ExecStart=/bin/sh -c 'test "$(sqlite3 /home/palinsesto/.local/share/palinsesto/backup/palinsesto.db.nuovo "PRAGMA integrity_check")" = ok'
+ExecStart=/bin/mv -f /home/palinsesto/.local/share/palinsesto/backup/palinsesto.db.nuovo /home/palinsesto/.local/share/palinsesto/backup/palinsesto.db
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/palinsesto/.local/share/palinsesto

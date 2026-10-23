@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block corpo %}
+{% if senza_chiave %}
+<p class="errore">Manca la chiave TMDB (in <code>{{ file_tmdb }}</code> o nella variabile <code>PALINSESTO_TMDB</code>): senza, niente ricerche né aggiornamenti.</p>
+{% endif %}
+
+{% set torna = '/' %}{% include "_piano_cambiato.html" %}
+
+{% if vuoto %}
+<section class="benvenuto riquadro">
+  <h1>Comincia da qui</h1>
+  <p>Cerca un film o una serie e aggiungila a una lista, oppure <a href="{{ url_for('importa') }}">importa l'elenco da JustWatch</a>. Ogni notte Palinsesto controlla dove si trovano i tuoi titoli e ti avvisa quando arriva qualcosa.</p>
+  <form action="{{ url_for('cerca') }}" class="cerca-grande"><input type="search" name="q" placeholder="Titolo di un film o di una serie" aria-label="Cerca"><button class="primario">Cerca</button></form>
+</section>
+{% endif %}
+
+<section>
+  <h2 class="sezione-titolo">Conviene? <a class="tutti" href="{{ url_for('piano') }}">piano dei prossimi mesi</a></h2>
+  <div class="consigli">
+  {% for x in consigli %}
+    <a class="consiglio v-{{ x.verdetto }}" href="{{ url_for('servizio', sid=x.s.id) }}">
+      {{ mm.logo_servizio(x.s) }}
+      <span class="consiglio-testo">
+        <b>{{ x.s.nome }}</b>
+        <span class="etichetta v-{{ x.verdetto }}">{{ mm.ETICHETTE[x.verdetto] }}</span>
+        {% if x.attivo %}<span class="etichetta abbonato">abbonato</span>{% elif x.pausa %}<span class="etichetta v-aspetta">in pausa fino al {{ x.pausa|gm }}</span>{% else %}<span class="etichetta">non abbonato</span>{% endif %}
+        <small>{{ x.testo }}</small>
+        {% if x.pronti %}<small class="titoli-consiglio">{% for y in x.pronti[:3] %}{{ y.t.titolo }}{{ ', ' if not loop.last }}{% endfor %}{% if x.pronti|length > 3 %} e altri {{ x.pronti|length - 3 }}{% endif %}</small>{% endif %}
+        {% if x.rischio_vicino %}<small class="allarme">Cronologia a rischio dal {{ x.rischio|gm }}</small>{% endif %}
+      </span>
+    </a>
+  {% else %}
+    <p class="vuoto">Nessun servizio seguito: scegli quali in <a href="{{ url_for('impostazioni') }}">Impostazioni</a>.</p>
+  {% endfor %}
+  </div>
+</section>
+
+{% if consigliati %}
+<section>
+  <h2 class="sezione-titolo">Consigliati per te</h2>
+  {{ mm.fila_consigliati(consigliati, csrf, '/') }}
+</section>
+{% endif %}
+
+{% if prossime %}
+<section>
+  <h2 class="sezione-titolo">In arrivo dai tuoi titoli</h2>
+  <ul class="elenco-righe">
+  {% for quando, t, cosa, dove in prossime %}
+    <li><a href="{{ link(t.id) }}">
+      {% if t.poster %}<img src="{{ img(t.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% endif %}
+      <span><b>{{ t.titolo }}</b><small>{{ cosa }} · {{ quando|gm }} ({{ quando|fra }})</small>
+        <span class="servizi-mini">{% for sid, nome in dove.items() %}<span class="chip">{{ nome }}</span>{% else %}<span class="chip">su nessun tuo servizio, per ora</span>{% endfor %}</span></span>
+    </a></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if conta_arrivi %}
+<section>
+  <h2 class="sezione-titolo">In arrivo sulle piattaforme <a class="tutti" href="{{ url_for('in_arrivo') }}">tutto</a></h2>
+  <nav class="schede-servizi" aria-label="In arrivo per servizio">
+    {% for s in conta_arrivi %}<a href="{{ url_for('in_arrivo', servizio=s.id) }}">{{ s.nome }} · {{ s.n }}</a>{% endfor %}
+  </nav>
+  <ul class="elenco-righe">{% for x in arrivi %}{{ mm.riga_arrivo(x, csrf, '/') }}{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section>
+  <h2 class="sezione-titolo">Ultime due settimane <a class="tutti" href="{{ url_for('novita') }}">tutte</a></h2>
+  {% if eventi %}
+  <ul class="elenco-righe">
+  {% for e in eventi %}
+    <li>{% if e.titolo_id %}<a href="{{ link(e.titolo_id) }}">{% else %}<a href="{{ url_for('abbonamenti') }}">{% endif %}
+      {% if e.poster %}<img src="{{ img(e.poster, 'w92') }}" alt="" width="46" height="69" loading="lazy">{% else %}<span class="segnaposto-riga"></span>{% endif %}
+      <span>{{ e.testo }}<small>{{ e.quando|gm }}</small></span>
+    </a></li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="vuoto">Ancora niente: gli eventi arrivano dal giro notturno, a partire dalla seconda notte dopo aver aggiunto un titolo.</p>
+  {% endif %}
+</section>
+<p class="stato-giro">Ultimo aggiornamento: {{ ultimo_giro[:16].replace('T', ' ') if ultimo_giro else 'mai' }}</p>
+{% endblock %}

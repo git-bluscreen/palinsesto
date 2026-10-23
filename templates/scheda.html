@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% import "_macro.html" as mm %}
+{% block titolo %}{{ t.titolo }} · Palinsesto{% endblock %}
+{% macro bottone(azione, acceso, testo_on, testo_off, extra='') %}
+<form method="post" class="in-riga">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="{{ azione }}">{{ extra }}
+  <button class="interruttore{{ ' acceso' if acceso }}" aria-pressed="{{ 'true' if acceso else 'false' }}">{{ testo_on if acceso else testo_off }}</button>
+</form>
+{% endmacro %}
+{% block corpo %}
+<article class="scheda">
+  <div class="scheda-testa">
+    <div class="scheda-poster">{% if t.poster %}<img src="{{ img(t.poster, 'w500') }}" alt="" width="500" height="750">{% else %}<span class="senza-poster">{{ t.titolo }}</span>{% endif %}</div>
+    <div class="scheda-info">
+      <h1>{{ t.titolo }}</h1>
+      <p class="sottotitolo-scheda">
+        {{ 'Serie' if t.tipo == 'tv' else 'Film' }}{% if t.anno %} · {{ t.anno }}{% endif %}
+        {% if t.durata %} · {{ t.durata }} min{% endif %}
+        {% if t.originale and t.originale != t.titolo %} · <i>{{ t.originale }}</i>{% endif %}
+      </p>
+      {% if t.generi %}<p class="generi">{{ t.generi }}</p>{% endif %}
+      {% if t.tipo == 'tv' and t.stato %}
+        <p class="stato-serie">{{ {'Returning Series': 'In corso', 'Ended': 'Conclusa', 'Canceled': 'Cancellata', 'In Production': 'In produzione', 'Planned': 'Annunciata'}.get(t.stato, t.stato) }}
+        {% if t.prossimo_ep %} · prossimo episodio {{ t.prossimo_ep_sigla }} il {{ t.prossimo_ep|gm }} ({{ t.prossimo_ep|fra }}){% endif %}</p>
+      {% endif %}
+      <div class="azioni">
+        {{ bottone('mi_piace', m and m.mi_piace, '♥ Mi piace', '♡ Mi piace') }}
+        {% if t.tipo == 'movie' %}{{ bottone('visto', m and m.visto, '✓ Visto', 'Segna visto') }}{% endif %}
+        {{ bottone('avvisi', m and m.avvisi, '✓ Avvisi attivi', 'Avvisi spenti') }}
+      </div>
+      {# le liste fanno da «mi interessa»; «non mi interessa» solo per chi non e' fra i miei:
+         per i miei c'e' «togli dai miei titoli», e i due significati non si mescolano #}
+      <div class="liste-chip liste-scheda" id="liste">
+      {% for l in liste %}
+        <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="lista"><input type="hidden" name="lista" value="{{ l.id }}">
+          <button class="interruttore{{ ' acceso' if l.dentro }}" aria-pressed="{{ 'true' if l.dentro else 'false' }}">{{ '✓ ' if l.dentro else '+ ' }}{{ l.nome }}</button></form>
+      {% endfor %}
+      {% if not m %}{{ bottone('nascondi', nascosto, '✕ Non ti interessa', 'Non mi interessa') }}{% endif %}
+      </div>
+      {% if m and m.rimanda %}<form method="post" action="{{ url_for('rimanda') }}" class="nota rimandato"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="titolo" value="{{ t.id }}"><input type="hidden" name="modo" value="no"><input type="hidden" name="torna" value="{{ request.path }}">
+        Rimandato nel piano: {{ 'solo se gratis, nei mesi già pagati' if m.rimanda == 'gratis' else 'non prima del ' ~ (m.rimanda|gm) }} · <button class="collegamento">rimettilo</button></form>{% endif %}
+      {% if nascosto %}<p class="nota">Non compare fra i consigliati né fra gli arrivi, e i titoli simili scendono. Ripremi per rimetterlo in gioco, o aggiungilo a una lista.</p>
+      {% elif not m %}<p class="nota">Non è ancora fra i tuoi titoli: aggiungilo a una lista per ricevere gli avvisi.</p>{% endif %}
+    </div>
+  </div>
+
+  {% if t.trama %}<p class="trama">{{ t.trama }}</p>{% endif %}
+
+  <section id="dove">
+    <h2 class="sezione-titolo">Dove lo trovi</h2>
+    {% if disp %}
+    <ul class="dove">
+    {% for d in disp %}
+      {% set abb = d.sid and d.seguito and d.offerta in ('flatrate', 'free', 'ads') %}
+      <li class="{{ 'seguito' if d.seguito else 'altro' }}{{ ' corretto' if d.corretto }}">
+        {% if d.sid %}<a class="riga-dove" href="{{ url_for('servizio', sid=d.sid) }}">{% else %}<span class="riga-dove">{% endif %}
+        {% if d.plogo %}<img src="{{ img(d.plogo, 'w92') }}" alt="" width="36" height="36">{% endif %}
+        <span><b>{{ d.servizio or d.provider }}</b>
+          {% if d.servizio and d.provider != d.servizio %}<small>{{ d.provider }}</small>{% endif %}
+          <small>{% if d.corretto %}secondo TMDB {{ offerte[d.offerta] }}, ma hai segnalato che non c'è{% else %}{{ offerte[d.offerta] }} · dal {{ d.dal|gm }}{% endif %}</small></span>
+        {% if abb and not d.corretto %}
+          {% if abbonato(d) %}<span class="etichetta abbonato">abbonato</span>{% else %}<span class="etichetta non-abbonato">non abbonato</span>{% endif %}
+        {% endif %}
+        {% if d.sid %}<span class="freccia" aria-hidden="true">›</span></a>{% else %}</span>{% endif %}
+        {% if abb %}
+          {% if d.corretto %}
+          <form method="post" class="in-riga correggi"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="ce_di_nuovo"><input type="hidden" name="servizio" value="{{ d.sid }}">
+            <button class="collegamento">c'è di nuovo</button></form>
+          {% else %}
+          <form method="post" class="in-riga correggi conferma" data-conferma="«{{ t.titolo }}» non è davvero su {{ d.servizio }}? Palinsesto lo ignorerà per questo titolo (piano, consigli, avvisi) finché TMDB smette di elencarlo."><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="non_ce"><input type="hidden" name="servizio" value="{{ d.sid }}">
+            <button class="collegamento tenue-link">non c'è davvero</button></form>
+          {% endif %}
+        {% endif %}
+      </li>
+    {% endfor %}
+    </ul>
+    <p class="nota">I servizi vengono da TMDB, che li prende da JustWatch, e a volte sbagliano. Se un titolo non c'è davvero, «non c'è davvero» lo toglie da quel servizio finché la fonte si corregge.</p>
+    {% else %}
+    <p class="vuoto">In Italia non risulta su nessun servizio di streaming, né a noleggio.</p>
+    {% endif %}
+  </section>
+
+  {% if t.tipo == 'tv' and stagioni %}
+  <section id="stagioni">
+    <h2 class="sezione-titolo">Stagioni
+      <form method="post" class="in-riga"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="{{ 'tutte_da_vedere' if tutte_viste else 'tutte_viste' }}"><button class="collegamento">{{ 'segna tutte come da vedere' if tutte_viste else 'segna tutte come viste' }}</button></form>
+    </h2>
+    <ul class="stagioni">
+    {% for s in stagioni %}
+      {% set r = riep.get(s.numero, {}) %}
+      {% set eps = episodi.get(s.numero, []) %}
+      <li id="s{{ s.numero }}" class="{{ 'vista' if r.vista }}{{ ' futura' if not s.uscita or s.uscita > o }}">
+        <div class="stagione-testa">
+          <form method="post" class="in-riga">
+            <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="stagione"><input type="hidden" name="n" value="{{ s.numero }}">
+            <button class="spunta{{ ' parziale' if r.noti and r.visti and not r.vista }}" aria-pressed="{{ 'true' if r.vista else 'false' }}" title="{{ 'Vista' if r.vista else 'Segna tutta la stagione' }}">{{ '✓' if r.vista else ('–' if r.noti and r.visti else '') }}</button>
+          </form>
+          {% set dati %}<b>{{ s.nome or ('Stagione ' ~ s.numero) }}</b>
+            <small>{% if r.noti %}{{ r.visti }}/{{ r.totale }} visti · {% elif s.episodi %}{{ s.episodi }} episodi · {% endif %}
+            {% if not s.uscita %}data non annunciata
+            {% elif s.uscita > o %}esce il {{ s.uscita|gm }} ({{ s.uscita|fra }})
+            {% elif s.fine and s.fine > o %}in corso, finisce il {{ s.fine|gm }}
+            {% else %}uscita il {{ s.uscita|gm }}{% if s.fine and s.fine != s.uscita %}, completa dal {{ s.fine|gm }}{% endif %}{% endif %}</small>{% endset %}
+          {% if eps %}
+          <details class="stagione-dettagli"{% if r.noti and r.visti and not r.vista %} open{% endif %}>
+            <summary class="stagione-nome">{{ dati }}</summary>
+            <ol class="episodi">
+            {% for e in eps %}
+              {% set visto_ep = e.numero in r.numeri_visti %}
+              <li class="{{ 'visto' if visto_ep }}{{ ' futuro' if not e.uscita or e.uscita > o }}">
+                <form method="post" class="in-riga">
+                  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="episodio">
+                  <input type="hidden" name="n" value="{{ s.numero }}"><input type="hidden" name="e" value="{{ e.numero }}">
+                  <button class="spunta piccola" aria-pressed="{{ 'true' if visto_ep else 'false' }}" title="{{ 'Visto' if visto_ep else 'Segna visto' }}" {% if not visto_ep and (not e.uscita or e.uscita > o) %}disabled{% endif %}>{{ '✓' if visto_ep else '' }}</button>
+                </form>
+                <span><b>{{ e.numero }}.</b> {{ e.nome or ('Episodio ' ~ e.numero) }}<small>{% if e.uscita %}{{ e.uscita|gm }}{% if e.uscita > o %} ({{ e.uscita|fra }}){% endif %}{% else %}data non annunciata{% endif %}{% if e.durata %} · {{ e.durata }} min{% endif %}</small></span>
+              </li>
+            {% endfor %}
+            </ol>
+          </details>
+          {% else %}
+          <span class="stagione-nome">{{ dati }}</span>
+          {% endif %}
+        </div>
+      </li>
+    {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if eventi %}
+  <section>
+    <h2 class="sezione-titolo">Storia</h2>
+    <ul class="storia">{% for e in eventi %}<li><small>{{ e.quando|gm }}</small> {{ e.testo }}</li>{% endfor %}</ul>
+  </section>
+  {% endif %}
+
+  <p class="piede-scheda">
+    Aggiornata {{ t.aggiornato[:16].replace('T', ' ') if t.aggiornato else 'mai' }} ·
+    <a href="?aggiorna=1">aggiorna ora</a> ·
+    <a href="https://www.themoviedb.org/{{ t.tipo }}/{{ t.tmdb_id }}" rel="noreferrer">su TMDB</a>
+    {% if m %} ·
+    <form method="post" class="in-riga conferma" data-conferma="Togliere «{{ t.titolo }}» dai tuoi titoli e da tutte le liste?"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="azione" value="rimuovi"><button class="collegamento pericolo">togli dai miei titoli</button></form>
+    {% endif %}
+  </p>
+</article>
+{% endblock %}

@@ -1,0 +1,16 @@
+[Unit]
+Description=Palinsesto: recupero del giro notturno (solo se quello delle 05:30 non si e' concluso)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=palinsesto
+ExecStart=/usr/bin/python3 /home/palinsesto/palinsesto/aggiorna.py --recupero
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/palinsesto/.local/share/palinsesto /home/palinsesto/.config/palinsesto
+TimeoutStartSec=30min
+# 75 = rete giu' (aggiorna.py RETE_GIU): lo dice la riga «giro FALLITO», non un'unita' fallita
+SuccessExitStatus=75
